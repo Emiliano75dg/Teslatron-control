@@ -25,6 +25,13 @@ class TemperatureControlMode(StrEnum):
     RAMP = "RAMP"
 
 
+class GasControlMode(StrEnum):
+    UNKNOWN = "UNKNOWN"
+    OFF = "OFF"
+    FIXED_NEEDLE = "FIXED_NEEDLE"
+    PRESSURE_CONTROL = "PRESSURE_CONTROL"
+
+
 @dataclass(slots=True)
 class PIDState:
     mode: str = "UNKNOWN"
@@ -66,7 +73,9 @@ class FieldState:
 @dataclass(slots=True)
 class PressureState:
     mbar: float | None = None
+    target_mbar: float | None = None
     needle_valve_percent: float | None = None
+    mode: GasControlMode = GasControlMode.UNKNOWN
 
 
 @dataclass(slots=True)
@@ -94,4 +103,5 @@ class CryostatState:
         data["mode"] = str(self.mode)
         data["temperature"]["sample"]["mode"] = str(self.temperature.sample.mode)
         data["temperature"]["vti"]["mode"] = str(self.temperature.vti.mode)
+        data["pressure"]["mode"] = str(self.pressure.mode)
         return data

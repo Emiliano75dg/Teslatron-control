@@ -20,6 +20,14 @@ class RampFieldRequest(BaseModel):
     rate_T_per_min: Annotated[float, Field(gt=0)]
 
 
+class NeedleValveRequest(BaseModel):
+    needle_valve_percent: Annotated[float, Field(ge=0, le=100)]
+
+
+class PressureRequest(BaseModel):
+    pressure_mbar: Annotated[float, Field(ge=0)]
+
+
 def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
     service = CryostatService(config or load_config())
 
@@ -117,6 +125,24 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
     async def abort() -> dict:
         try:
             return await service.abort()
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    @app.post("/commands/vti/gas/set-needle")
+    async def set_vti_needle(request: NeedleValveRequest) -> dict:
+        try:
+            return await service.set_vti_needle(request.needle_valve_percent)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    @app.post("/commands/vti/gas/set-pressure")
+    async def set_vti_pressure(request: PressureRequest) -> dict:
+        try:
+            return await service.set_vti_pressure(request.pressure_mbar)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
 

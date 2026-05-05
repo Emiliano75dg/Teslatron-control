@@ -81,6 +81,20 @@ class CryostatService:
         await self.poll_once()
         return self._state.to_dict()
 
+    async def set_vti_needle(self, needle_valve_percent: float) -> dict[str, Any]:
+        self._ensure_writable()
+        self._validate_needle_valve(needle_valve_percent)
+        self.backend.set_vti_needle(needle_valve_percent)
+        await self.poll_once()
+        return self._state.to_dict()
+
+    async def set_vti_pressure(self, pressure_mbar: float) -> dict[str, Any]:
+        self._ensure_writable()
+        self._validate_pressure(pressure_mbar)
+        self.backend.set_vti_pressure(pressure_mbar)
+        await self.poll_once()
+        return self._state.to_dict()
+
     async def poll_once(self) -> CryostatState:
         self._state = self._read_state_safely()
         data = self._state.to_dict()
@@ -168,6 +182,14 @@ class CryostatService:
         if rate_T_per_min <= 0 or rate_T_per_min > safety.max_field_rate_T_per_min:
             raise ValueError(f"Field rate out of range: {rate_T_per_min} T/min")
 
+    def _validate_needle_valve(self, needle_valve_percent: float) -> None:
+        if not 0.0 <= needle_valve_percent <= 100.0:
+            raise ValueError("Needle valve opening must be between 0 and 100 percent")
+
+    def _validate_pressure(self, pressure_mbar: float) -> None:
+        if pressure_mbar < 0:
+            raise ValueError("Pressure target must be non-negative")
+
     def _ensure_writable(self) -> None:
         if self.config.read_only:
             raise PermissionError("Cryostat service is running in read-only mode")
@@ -229,7 +251,9 @@ def _flatten_state(data: dict[str, Any]) -> dict[str, Any]:
         "field_stable": data["field"]["stable"],
         "field_ramping": data["field"]["ramping"],
         "pressure_mbar": data["pressure"]["mbar"],
+        "pressure_target_mbar": data["pressure"]["target_mbar"],
         "needle_valve_percent": data["pressure"]["needle_valve_percent"],
+        "pressure_mode": data["pressure"]["mode"],
         "safety_level": data["safety"]["level"],
         "safety_message": data["safety"]["message"],
     }

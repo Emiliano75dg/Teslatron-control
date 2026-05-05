@@ -10,6 +10,7 @@ from .state import (
     CryostatMode,
     CryostatState,
     FieldState,
+    GasControlMode,
     PIDState,
     PressureState,
     TemperatureControlMode,
@@ -44,6 +45,12 @@ class CryostatBackend(ABC):
     def abort(self) -> None:
         raise NotImplementedError
 
+    def set_vti_needle(self, needle_valve_percent: float) -> None:
+        raise NotImplementedError
+
+    def set_vti_pressure(self, pressure_mbar: float) -> None:
+        raise NotImplementedError
+
     def diagnostics(self) -> dict:
         return {"backend": type(self).__name__}
 
@@ -68,6 +75,10 @@ class MockCryostatBackend(CryostatBackend):
         self._field_T = 0.0
         self._target_field_T = 0.0
         self._field_rate_T_per_min = 0.2
+        self._pressure_mbar = 8.0e-6
+        self._pressure_target_mbar: float | None = None
+        self._needle_valve_percent = 0.0
+        self._gas_mode = GasControlMode.FIXED_NEEDLE
         self._mode = CryostatMode.IDLE
         self._last_update = monotonic()
         self._aborted = False
@@ -125,7 +136,12 @@ class MockCryostatBackend(CryostatBackend):
                 stable=not field_ramping,
                 ramping=field_ramping,
             ),
-            pressure=PressureState(mbar=8.0e-6, needle_valve_percent=0.0),
+            pressure=PressureState(
+                mbar=self._pressure_mbar,
+                target_mbar=self._pressure_target_mbar,
+                needle_valve_percent=self._needle_valve_percent,
+                mode=self._gas_mode,
+            ),
             backend="mock",
         )
 
@@ -162,6 +178,14 @@ class MockCryostatBackend(CryostatBackend):
     def abort(self) -> None:
         self.hold()
         self._aborted = True
+
+    def set_vti_needle(self, needle_valve_percent: float) -> None:
+        self._needle_valve_percent = needle_valve_percent
+        self._gas_mode = GasControlMode.FIXED_NEEDLE
+
+    def set_vti_pressure(self, pressure_mbar: float) -> None:
+        self._pressure_target_mbar = pressure_mbar
+        self._gas_mode = GasControlMode.PRESSURE_CONTROL
 
     def diagnostics(self) -> dict:
         return {
@@ -273,6 +297,9 @@ class MercuryCryostatBackend(CryostatBackend):
         needle = self._read_itc_float(
             f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:FSET?"
         )
+        pressure_target = self._read_itc_float(
+            f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:PRST?"
+        )
 
         field_T = self._read_ips_float(
             f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FLD?"
@@ -334,7 +361,14 @@ class MercuryCryostatBackend(CryostatBackend):
                 stable=not field_ramping,
                 ramping=field_ramping,
             ),
-            pressure=PressureState(mbar=pressure, needle_valve_percent=needle),
+            pressure=PressureState(
+                mbar=pressure,
+                target_mbar=pressure_target,
+                needle_valve_percent=needle,
+                mode=GasControlMode.PRESSURE_CONTROL
+                if pressure_target is not None
+                else GasControlMode.UNKNOWN,
+            ),
             backend="mercury",
         )
 
@@ -391,6 +425,17 @@ class MercuryCryostatBackend(CryostatBackend):
         self.hold()
         self._aborted = True
 
+    def set_vti_needle(self, needle_valve_percent: float) -> None:
+        self.itc.set(
+            f"SET:DEV:{self.config.itc.pressure}:PRES:LOOP:FSET:{needle_valve_percent:.9g}"
+        )
+
+    def set_vti_pressure(self, pressure_mbar: float) -> None:
+        self.itc.set(f"SET:DEV:{self.config.itc.pressure}:PRES:LOOP:ENAB:ON")
+        self.itc.set(
+            f"SET:DEV:{self.config.itc.pressure}:PRES:LOOP:PRST:{pressure_mbar:.9g}"
+        )
+
     def diagnostics(self) -> dict:
         return {
             "backend": "mercury",
@@ -421,6 +466,7 @@ class MercuryCryostatBackend(CryostatBackend):
             "itc_probe_setpoint": f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:TSET?",
             "itc_vti_setpoint": f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:TSET?",
             "itc_pressure": f"READ:DEV:{self.config.itc.pressure}:PRES:SIG:PRES?",
+            "itc_pressure_setpoint": f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:PRST?",
             "itc_needle_valve": f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:FSET?",
             "ips_field": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FLD?",
             "ips_field_setpoint": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FSET?",

@@ -20,6 +20,15 @@ Each loop has its own temperature, setpoint, rate, heater output, PID metadata,
 mode, stability and ramping state. This mirrors the LabVIEW split between
 Sample Loop Controls and VTI Loop Controls.
 
+Gas/pressure control belongs to the VTI side of the cryostat. It has two
+control modes:
+
+- fixed needle valve opening, using the Mercury `FSET` field
+- pressure control, using the Mercury `PRST` pressure setpoint field
+
+`PSET` is intentionally not used for pressure here, because it is reserved for
+power-related commands in our current working convention.
+
 Electrical measurement services should own only their electrical instruments.
 They should read the latest cryostat state from the cryostat service instead of
 opening iTC/iPS directly.
@@ -51,6 +60,8 @@ The current implementation has two cryostat backends:
   - `POST /commands/ramp-field`
   - `POST /commands/hold`
   - `POST /commands/abort`
+  - `POST /commands/vti/gas/set-needle`
+  - `POST /commands/vti/gas/set-pressure`
 
 ## Run
 
@@ -104,6 +115,22 @@ Ramp only the VTI loop:
 curl -X POST http://127.0.0.1:8765/commands/temperature/vti/ramp \
   -H 'Content-Type: application/json' \
   -d '{"target_K": 5.0, "rate_K_per_min": 1.0}'
+```
+
+Set VTI needle valve opening directly:
+
+```bash
+curl -X POST http://127.0.0.1:8765/commands/vti/gas/set-needle \
+  -H 'Content-Type: application/json' \
+  -d '{"needle_valve_percent": 15.0}'
+```
+
+Set VTI pressure target:
+
+```bash
+curl -X POST http://127.0.0.1:8765/commands/vti/gas/set-pressure \
+  -H 'Content-Type: application/json' \
+  -d '{"pressure_mbar": 10.0}'
 ```
 
 ## Next step
