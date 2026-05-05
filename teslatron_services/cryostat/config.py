@@ -10,6 +10,9 @@ import json
 @dataclass(slots=True)
 class MercuryITCConfig:
     address: str = "ASRL7::INSTR"
+    timeout_ms: int = 3000
+    read_termination: str = "\n"
+    write_termination: str = "\n"
     probe_signal: str = "DB8.T1"
     probe_loop: str = "DB8.T1"
     vti_signal: str = "MB1.T1"
@@ -20,6 +23,9 @@ class MercuryITCConfig:
 @dataclass(slots=True)
 class MercuryIPSConfig:
     address: str = "ASRL8::INSTR"
+    timeout_ms: int = 3000
+    read_termination: str = "\n"
+    write_termination: str = "\n"
     magnet_group: str = "GRPZ"
 
 

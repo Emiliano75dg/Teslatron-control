@@ -7,6 +7,9 @@
     "log_path": "data/cryostat_environment.csv",
     "itc": {
       "address": "TCPIP0::172.31.109.115::7020::SOCKET",
+      "timeout_ms": 3000,
+      "read_termination": "\n",
+      "write_termination": "\n",
       "probe_signal": "DB8.T1",
       "probe_loop": "DB8.T1",
       "vti_signal": "MB1.T1",
@@ -15,6 +18,9 @@
     },
     "ips": {
       "address": "TCPIP0::172.31.109.116::7020::SOCKET",
+      "timeout_ms": 3000,
+      "read_termination": "\n",
+      "write_termination": "\n",
       "magnet_group": "GRPZ"
     },
     "safety": {

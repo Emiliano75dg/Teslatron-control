@@ -52,6 +52,7 @@ The current implementation has two cryostat backends:
   - `GET /diagnostics/resources`
   - `GET /diagnostics/catalog`
   - `GET /diagnostics/readings`
+  - `POST /diagnostics/query`
 - streams state updates at `WS /ws/state`
 - accepts basic commands:
   - `POST /commands/ramp-temperature`
@@ -198,4 +199,30 @@ First hardware checks should use read-only endpoints:
 GET /diagnostics/resources
 GET /diagnostics/catalog
 GET /diagnostics/readings
+```
+
+For one-off manual Mercury checks, use `POST /diagnostics/query`. It only
+accepts commands beginning with `READ:`:
+
+```bash
+curl -X POST http://127.0.0.1:8765/diagnostics/query \
+  -H 'Content-Type: application/json' \
+  -d '{"target": "itc", "command": "READ:SYS:CAT"}'
+```
+
+VISA connection details are configurable per controller:
+
+```json
+{
+  "address": "TCPIP0::172.31.109.115::7020::SOCKET",
+  "timeout_ms": 3000,
+  "read_termination": "\n",
+  "write_termination": "\n"
+}
+```
+
+Alternative TCP/IP VISA strings are collected in:
+
+```text
+config/cryostat_tcpip_candidates.json
 ```

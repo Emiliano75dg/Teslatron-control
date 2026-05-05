@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 import re
 import time
-from time import monotonic
+from time import monotonic, time as unix_time
 
 from .config import CryostatServiceConfig
 from .state import (
@@ -59,6 +59,9 @@ class CryostatBackend(ABC):
 
     def raw_readings(self) -> dict:
         return self.read_state().to_dict()
+
+    def diagnostic_query(self, target: str, command: str) -> dict:
+        raise NotImplementedError
 
 
 class MockCryostatBackend(CryostatBackend):
@@ -205,6 +208,14 @@ class MockCryostatBackend(CryostatBackend):
             "ips": [f"{self.config.ips.magnet_group}:PSU"],
         }
 
+    def diagnostic_query(self, target: str, command: str) -> dict:
+        return {
+            "target": target,
+            "command": command,
+            "response": "MOCK:OK",
+            "backend": "mock",
+        }
+
     def _advance(self) -> None:
         now = monotonic()
         dt = now - self._last_update
@@ -236,30 +247,75 @@ def _step_towards(current: float, target: float, max_step: float) -> float:
 
 
 class MercuryResource:
-    def __init__(self, address: str):
+    def __init__(
+        self,
+        address: str,
+        timeout_ms: int = 3000,
+        read_termination: str = "\n",
+        write_termination: str = "\n",
+    ):
         import pyvisa
 
         self.address = address
+        self.timeout_ms = timeout_ms
+        self.read_termination = read_termination
+        self.write_termination = write_termination
         self.resource_manager = pyvisa.ResourceManager()
         self.instrument = self.resource_manager.open_resource(
             address,
-            read_termination="\n",
-            write_termination="\n",
+            read_termination=read_termination,
+            write_termination=write_termination,
         )
+        self.instrument.timeout = timeout_ms
 
     def query(self, command: str) -> str:
-        return self.instrument.query(command)
+        try:
+            return self.instrument.query(command)
+        except Exception as exc:
+            raise MercuryQueryError(self.address, command, exc) from exc
 
     def set(self, command: str) -> str:
         # Mercury controllers answer SET commands; using query keeps buffers aligned.
-        return self.instrument.query(command)
+        return self.query(command)
+
+
+class MercuryQueryError(RuntimeError):
+    def __init__(self, address: str, command: str, original: Exception):
+        self.address = address
+        self.command = command
+        self.timestamp = unix_time()
+        self.original_type = type(original).__name__
+        self.original_message = str(original)
+        super().__init__(
+            f"Mercury query failed at {address} for {command!r}: "
+            f"{self.original_type}: {self.original_message}"
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "address": self.address,
+            "command": self.command,
+            "timestamp": self.timestamp,
+            "exception_type": self.original_type,
+            "message": self.original_message,
+        }
 
 
 class MercuryCryostatBackend(CryostatBackend):
     def __init__(self, config: CryostatServiceConfig):
         self.config = config
-        self.itc = MercuryResource(config.itc.address)
-        self.ips = MercuryResource(config.ips.address)
+        self.itc = MercuryResource(
+            config.itc.address,
+            timeout_ms=config.itc.timeout_ms,
+            read_termination=config.itc.read_termination,
+            write_termination=config.itc.write_termination,
+        )
+        self.ips = MercuryResource(
+            config.ips.address,
+            timeout_ms=config.ips.timeout_ms,
+            read_termination=config.ips.read_termination,
+            write_termination=config.ips.write_termination,
+        )
         self._sample_target_K: float | None = None
         self._sample_rate_K_per_min: float | None = None
         self._vti_target_K: float | None = None
@@ -441,6 +497,16 @@ class MercuryCryostatBackend(CryostatBackend):
             "backend": "mercury",
             "itc_address": self.config.itc.address,
             "ips_address": self.config.ips.address,
+            "itc_visa": {
+                "timeout_ms": self.config.itc.timeout_ms,
+                "read_termination": self.config.itc.read_termination,
+                "write_termination": self.config.itc.write_termination,
+            },
+            "ips_visa": {
+                "timeout_ms": self.config.ips.timeout_ms,
+                "read_termination": self.config.ips.read_termination,
+                "write_termination": self.config.ips.write_termination,
+            },
             "itc_modules": {
                 "probe_signal": self.config.itc.probe_signal,
                 "probe_loop": self.config.itc.probe_loop,
@@ -480,10 +546,37 @@ class MercuryCryostatBackend(CryostatBackend):
             for name, command in commands.items()
         }
 
+    def diagnostic_query(self, target: str, command: str) -> dict:
+        resource = self._diagnostic_resource(target)
+        try:
+            response = resource.query(command)
+            return {
+                "target": target,
+                "address": resource.address,
+                "command": command,
+                "response": response,
+            }
+        except MercuryQueryError as exc:
+            return {
+                "target": target,
+                "address": resource.address,
+                "command": command,
+                "error": exc.to_dict(),
+            }
+
     def _query_for_diagnostics(self, command: str) -> str:
         if command.startswith("READ:DEV:") and ":PSU:" in command:
             return self.ips.query(command)
         return self.itc.query(command)
+
+    def _diagnostic_resource(self, target: str) -> MercuryResource:
+        match target:
+            case "itc":
+                return self.itc
+            case "ips":
+                return self.ips
+            case _:
+                raise ValueError("Diagnostic target must be 'itc' or 'ips'")
 
     def _temperature_loop_names(self, loop: str) -> set[str]:
         match loop:

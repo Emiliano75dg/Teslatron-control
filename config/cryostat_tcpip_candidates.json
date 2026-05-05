@@ -1,0 +1,19 @@
+{
+  "notes": [
+    "Candidate VISA strings for the Mercury Ethernet controllers.",
+    "Copy one candidate into config/cryostat_ethernet.example.json before testing.",
+    "Keep read_only true during first hardware checks."
+  ],
+  "itc": [
+    "TCPIP0::172.31.109.115::7020::SOCKET",
+    "TCPIP::172.31.109.115::7020::SOCKET",
+    "TCPIP0::172.31.109.115::7020::INSTR",
+    "TCPIP::172.31.109.115::INSTR"
+  ],
+  "ips": [
+    "TCPIP0::172.31.109.116::7020::SOCKET",
+    "TCPIP::172.31.109.116::7020::SOCKET",
+    "TCPIP0::172.31.109.116::7020::INSTR",
+    "TCPIP::172.31.109.116::INSTR"
+  ]
+}

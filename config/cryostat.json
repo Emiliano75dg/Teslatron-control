@@ -7,6 +7,9 @@
     "log_path": "data/cryostat_environment.csv",
     "itc": {
       "address": "ASRL7::INSTR",
+      "timeout_ms": 3000,
+      "read_termination": "\n",
+      "write_termination": "\n",
       "probe_signal": "DB8.T1",
       "probe_loop": "DB8.T1",
       "vti_signal": "MB1.T1",
@@ -15,6 +18,9 @@
     },
     "ips": {
       "address": "ASRL8::INSTR",
+      "timeout_ms": 3000,
+      "read_termination": "\n",
+      "write_termination": "\n",
       "magnet_group": "GRPZ"
     },
     "safety": {

@@ -28,6 +28,11 @@ class PressureRequest(BaseModel):
     pressure_mbar: Annotated[float, Field(ge=0)]
 
 
+class DiagnosticQueryRequest(BaseModel):
+    target: str
+    command: str
+
+
 def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
     service = CryostatService(config or load_config())
 
@@ -73,6 +78,15 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
     async def diagnostics_readings() -> dict:
         try:
             return service.raw_readings()
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/diagnostics/query")
+    async def diagnostics_query(request: DiagnosticQueryRequest) -> dict:
+        try:
+            return service.diagnostic_query(request.target, request.command)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 

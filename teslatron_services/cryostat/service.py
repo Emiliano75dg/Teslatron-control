@@ -217,6 +217,14 @@ class CryostatService:
     def raw_readings(self) -> dict[str, Any]:
         return self.backend.raw_readings()
 
+    def diagnostic_query(self, target: str, command: str) -> dict[str, Any]:
+        normalized = command.strip()
+        if not normalized.startswith("READ:"):
+            raise ValueError("Diagnostic query only allows READ commands")
+        if target not in {"itc", "ips"}:
+            raise ValueError("Diagnostic target must be 'itc' or 'ips'")
+        return self.backend.diagnostic_query(target, normalized)
+
 
 def _flatten_state(data: dict[str, Any]) -> dict[str, Any]:
     sample = data["temperature"]["sample"]
