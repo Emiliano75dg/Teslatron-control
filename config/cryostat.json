@@ -1,0 +1,28 @@
+{
+  "cryostat": {
+    "backend": "mock",
+    "read_only": false,
+    "poll_interval_s": 1.0,
+    "log_interval_s": 20.0,
+    "log_path": "data/cryostat_environment.csv",
+    "itc": {
+      "address": "ASRL7::INSTR",
+      "probe_signal": "DB8.T1",
+      "probe_loop": "DB8.T1",
+      "vti_signal": "MB1.T1",
+      "vti_loop": "MB1.T1",
+      "pressure": "DB5.P1"
+    },
+    "ips": {
+      "address": "ASRL8::INSTR",
+      "magnet_group": "GRPZ"
+    },
+    "safety": {
+      "min_temperature_K": 0.0,
+      "max_temperature_K": 350.0,
+      "max_temperature_rate_K_per_min": 5.0,
+      "max_field_T": 12.0,
+      "max_field_rate_T_per_min": 0.5
+    }
+  }
+}

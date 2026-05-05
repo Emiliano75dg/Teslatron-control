@@ -1,0 +1,7 @@
+__pycache__
+test*
+*.log
+*.ipynb
+!example_measurement_script.ipynb
+.codex
+data/*.csv
