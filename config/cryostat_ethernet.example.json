@@ -21,7 +21,10 @@
       "timeout_ms": 3000,
       "read_termination": "\n",
       "write_termination": "\n",
-      "magnet_group": "GRPZ"
+      "magnet_group": "GRPZ",
+      "magnet_temperature": "MB1.T1",
+      "pt1_temperature": "DB8.T1",
+      "pt2_temperature": "DB7.T1"
     },
     "safety": {
       "min_temperature_K": 0.0,

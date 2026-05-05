@@ -66,6 +66,11 @@ class FieldState:
     B_T: float | None = None
     target_T: float | None = None
     rate_T_per_min: float | None = None
+    output_current_A: float | None = None
+    output_voltage_V: float | None = None
+    magnet_temperature_K: float | None = None
+    pt1_temperature_K: float | None = None
+    pt2_temperature_K: float | None = None
     stable: bool = False
     ramping: bool = False
 

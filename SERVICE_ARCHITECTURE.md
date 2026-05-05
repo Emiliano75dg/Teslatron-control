@@ -29,6 +29,14 @@ control modes:
 `PSET` is intentionally not used for pressure here, because it is reserved for
 power-related commands in our current working convention.
 
+The iPS model includes:
+
+- magnetic field readback, setpoint and sweep rate
+- output current and voltage
+- magnet temperature
+- PT1 temperature
+- PT2 temperature
+
 Electrical measurement services should own only their electrical instruments.
 They should read the latest cryostat state from the cryostat service instead of
 opening iTC/iPS directly.
@@ -162,7 +170,10 @@ The configured Mercury modules are:
   },
   "ips": {
     "address": "ASRL8::INSTR",
-    "magnet_group": "GRPZ"
+    "magnet_group": "GRPZ",
+    "magnet_temperature": "MB1.T1",
+    "pt1_temperature": "DB8.T1",
+    "pt2_temperature": "DB7.T1"
   }
 }
 ```

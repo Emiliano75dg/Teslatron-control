@@ -78,6 +78,8 @@ class MockCryostatBackend(CryostatBackend):
         self._field_T = 0.0
         self._target_field_T = 0.0
         self._field_rate_T_per_min = 0.2
+        self._field_current_A = 0.0
+        self._field_voltage_V = 0.0
         self._pressure_mbar = 8.0e-6
         self._pressure_target_mbar: float | None = None
         self._needle_valve_percent = 0.0
@@ -136,6 +138,11 @@ class MockCryostatBackend(CryostatBackend):
                 B_T=round(self._field_T, 6),
                 target_T=self._target_field_T,
                 rate_T_per_min=self._field_rate_T_per_min,
+                output_current_A=round(self._field_current_A, 6),
+                output_voltage_V=round(self._field_voltage_V, 6),
+                magnet_temperature_K=4.2,
+                pt1_temperature_K=3.82,
+                pt2_temperature_K=50.8,
                 stable=not field_ramping,
                 ramping=field_ramping,
             ),
@@ -360,11 +367,26 @@ class MercuryCryostatBackend(CryostatBackend):
         field_T = self._read_ips_float(
             f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FLD?"
         )
+        field_current_A = self._read_ips_float(
+            f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:CURR?"
+        )
+        field_voltage_V = self._read_ips_float(
+            f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:VOLT?"
+        )
         field_target_T = self._read_ips_float(
             f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FSET?"
         )
         field_rate = self._read_ips_float(
             f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:RFLD?"
+        )
+        magnet_temperature_K = self._read_ips_float(
+            f"READ:DEV:{self.config.ips.magnet_temperature}:TEMP:SIG:TEMP?"
+        )
+        pt1_temperature_K = self._read_ips_float(
+            f"READ:DEV:{self.config.ips.pt1_temperature}:TEMP:SIG:TEMP?"
+        )
+        pt2_temperature_K = self._read_ips_float(
+            f"READ:DEV:{self.config.ips.pt2_temperature}:TEMP:SIG:TEMP?"
         )
 
         vti_rate = self._read_itc_float(
@@ -414,6 +436,11 @@ class MercuryCryostatBackend(CryostatBackend):
                 B_T=field_T,
                 target_T=field_target_T,
                 rate_T_per_min=field_rate,
+                output_current_A=field_current_A,
+                output_voltage_V=field_voltage_V,
+                magnet_temperature_K=magnet_temperature_K,
+                pt1_temperature_K=pt1_temperature_K,
+                pt2_temperature_K=pt2_temperature_K,
                 stable=not field_ramping,
                 ramping=field_ramping,
             ),
@@ -516,6 +543,9 @@ class MercuryCryostatBackend(CryostatBackend):
             },
             "ips_modules": {
                 "magnet_group": self.config.ips.magnet_group,
+                "magnet_temperature": self.config.ips.magnet_temperature,
+                "pt1_temperature": self.config.ips.pt1_temperature,
+                "pt2_temperature": self.config.ips.pt2_temperature,
             },
         }
 
@@ -535,8 +565,13 @@ class MercuryCryostatBackend(CryostatBackend):
             "itc_pressure_setpoint": f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:PRST?",
             "itc_needle_valve": f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:FSET?",
             "ips_field": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FLD?",
+            "ips_current": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:CURR?",
+            "ips_voltage": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:VOLT?",
             "ips_field_setpoint": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FSET?",
             "ips_field_rate": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:RFLD?",
+            "ips_magnet_temperature": f"READ:DEV:{self.config.ips.magnet_temperature}:TEMP:SIG:TEMP?",
+            "ips_pt1_temperature": f"READ:DEV:{self.config.ips.pt1_temperature}:TEMP:SIG:TEMP?",
+            "ips_pt2_temperature": f"READ:DEV:{self.config.ips.pt2_temperature}:TEMP:SIG:TEMP?",
         }
         return {
             name: {

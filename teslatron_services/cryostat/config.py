@@ -27,6 +27,9 @@ class MercuryIPSConfig:
     read_termination: str = "\n"
     write_termination: str = "\n"
     magnet_group: str = "GRPZ"
+    magnet_temperature: str = "MB1.T1"
+    pt1_temperature: str = "DB8.T1"
+    pt2_temperature: str = "DB7.T1"
 
 
 @dataclass(slots=True)
