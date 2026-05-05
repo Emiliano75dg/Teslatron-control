@@ -13,6 +13,8 @@ from .state import (
     GasControlMode,
     PIDState,
     PressureState,
+    SwitchHeaterState,
+    SwitchHeaterStatus,
     TemperatureControlMode,
     TemperatureLoopState,
     TemperatureState,
@@ -51,6 +53,9 @@ class CryostatBackend(ABC):
     def set_vti_pressure(self, pressure_mbar: float) -> None:
         raise NotImplementedError
 
+    def set_switch_heater(self, enabled: bool) -> None:
+        raise NotImplementedError
+
     def diagnostics(self) -> dict:
         return {"backend": type(self).__name__}
 
@@ -80,6 +85,9 @@ class MockCryostatBackend(CryostatBackend):
         self._field_rate_T_per_min = 0.2
         self._field_current_A = 0.0
         self._field_voltage_V = 0.0
+        self._switch_heater_status = SwitchHeaterStatus.OFF
+        self._switch_heater_target = SwitchHeaterStatus.OFF
+        self._switch_heater_changed_at: float | None = None
         self._pressure_mbar = 8.0e-6
         self._pressure_target_mbar: float | None = None
         self._needle_valve_percent = 0.0
@@ -146,6 +154,7 @@ class MockCryostatBackend(CryostatBackend):
                 stable=not field_ramping,
                 ramping=field_ramping,
             ),
+            switch_heater=self._switch_heater_state(),
             pressure=PressureState(
                 mbar=self._pressure_mbar,
                 target_mbar=self._pressure_target_mbar,
@@ -197,6 +206,12 @@ class MockCryostatBackend(CryostatBackend):
         self._pressure_target_mbar = pressure_mbar
         self._gas_mode = GasControlMode.PRESSURE_CONTROL
 
+    def set_switch_heater(self, enabled: bool) -> None:
+        status = SwitchHeaterStatus.ON if enabled else SwitchHeaterStatus.OFF
+        self._switch_heater_status = status
+        self._switch_heater_target = status
+        self._switch_heater_changed_at = unix_time()
+
     def diagnostics(self) -> dict:
         return {
             "backend": "mock",
@@ -214,6 +229,27 @@ class MockCryostatBackend(CryostatBackend):
             ],
             "ips": [f"{self.config.ips.magnet_group}:PSU"],
         }
+
+    def _switch_heater_state(self) -> SwitchHeaterState:
+        delay = self._switch_heater_delay_s(self._switch_heater_target)
+        elapsed = (
+            unix_time() - self._switch_heater_changed_at
+            if self._switch_heater_changed_at is not None
+            else None
+        )
+        return SwitchHeaterState(
+            status=self._switch_heater_status,
+            target_status=self._switch_heater_target,
+            ready=elapsed is None or elapsed >= delay,
+            delay_s=delay,
+            last_changed_at=self._switch_heater_changed_at,
+            elapsed_s=elapsed,
+        )
+
+    def _switch_heater_delay_s(self, status: SwitchHeaterStatus) -> float:
+        if status == SwitchHeaterStatus.ON:
+            return self.config.ips.switch_on_delay_s
+        return self.config.ips.switch_off_delay_s
 
     def diagnostic_query(self, target: str, command: str) -> dict:
         return {
@@ -329,6 +365,8 @@ class MercuryCryostatBackend(CryostatBackend):
         self._vti_rate_K_per_min: float | None = None
         self._field_target_T: float | None = None
         self._field_rate_T_per_min: float | None = None
+        self._switch_heater_target = SwitchHeaterStatus.UNKNOWN
+        self._switch_heater_changed_at: float | None = None
         self._mode = CryostatMode.IDLE
         self._aborted = False
 
@@ -388,6 +426,7 @@ class MercuryCryostatBackend(CryostatBackend):
         pt2_temperature_K = self._read_ips_float(
             f"READ:DEV:{self.config.ips.pt2_temperature}:TEMP:SIG:TEMP?"
         )
+        switch_heater_status = self._read_switch_heater_status()
 
         vti_rate = self._read_itc_float(
             f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:RSET?"
@@ -444,6 +483,7 @@ class MercuryCryostatBackend(CryostatBackend):
                 stable=not field_ramping,
                 ramping=field_ramping,
             ),
+            switch_heater=self._switch_heater_state(switch_heater_status),
             pressure=PressureState(
                 mbar=pressure,
                 target_mbar=pressure_target,
@@ -519,6 +559,14 @@ class MercuryCryostatBackend(CryostatBackend):
             f"SET:DEV:{self.config.itc.pressure}:PRES:LOOP:PRST:{pressure_mbar:.9g}"
         )
 
+    def set_switch_heater(self, enabled: bool) -> None:
+        state = "ON" if enabled else "OFF"
+        self.ips.set(f"SET:DEV:{self.config.ips.magnet_group}:PSU:SIG:SWHT:{state}")
+        self._switch_heater_target = (
+            SwitchHeaterStatus.ON if enabled else SwitchHeaterStatus.OFF
+        )
+        self._switch_heater_changed_at = unix_time()
+
     def diagnostics(self) -> dict:
         return {
             "backend": "mercury",
@@ -547,6 +595,12 @@ class MercuryCryostatBackend(CryostatBackend):
                 "pt1_temperature": self.config.ips.pt1_temperature,
                 "pt2_temperature": self.config.ips.pt2_temperature,
             },
+            "switch_heater": {
+                "on_delay_s": self.config.ips.switch_on_delay_s,
+                "off_delay_s": self.config.ips.switch_off_delay_s,
+                "normal_command": "SWHT",
+                "forced_command_not_used": "SWHN",
+            },
         }
 
     def catalog(self) -> dict:
@@ -569,6 +623,7 @@ class MercuryCryostatBackend(CryostatBackend):
             "ips_voltage": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:VOLT?",
             "ips_field_setpoint": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FSET?",
             "ips_field_rate": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:RFLD?",
+            "ips_switch_heater": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:SWHT?",
             "ips_magnet_temperature": f"READ:DEV:{self.config.ips.magnet_temperature}:TEMP:SIG:TEMP?",
             "ips_pt1_temperature": f"READ:DEV:{self.config.ips.pt1_temperature}:TEMP:SIG:TEMP?",
             "ips_pt2_temperature": f"READ:DEV:{self.config.ips.pt2_temperature}:TEMP:SIG:TEMP?",
@@ -612,6 +667,44 @@ class MercuryCryostatBackend(CryostatBackend):
                 return self.ips
             case _:
                 raise ValueError("Diagnostic target must be 'itc' or 'ips'")
+
+    def _read_switch_heater_status(self) -> SwitchHeaterStatus:
+        response = self.ips.query(
+            f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:SWHT?"
+        )
+        token = response.split(":")[-1].strip().upper()
+        if token.endswith("ON"):
+            return SwitchHeaterStatus.ON
+        if token.endswith("OFF"):
+            return SwitchHeaterStatus.OFF
+        return SwitchHeaterStatus.UNKNOWN
+
+    def _switch_heater_state(self, status: SwitchHeaterStatus) -> SwitchHeaterState:
+        target = (
+            self._switch_heater_target
+            if self._switch_heater_target != SwitchHeaterStatus.UNKNOWN
+            else status
+        )
+        delay = self._switch_heater_delay_s(target)
+        elapsed = (
+            unix_time() - self._switch_heater_changed_at
+            if self._switch_heater_changed_at is not None
+            else None
+        )
+        ready = status == target and (elapsed is None or elapsed >= delay)
+        return SwitchHeaterState(
+            status=status,
+            target_status=target,
+            ready=ready,
+            delay_s=delay,
+            last_changed_at=self._switch_heater_changed_at,
+            elapsed_s=elapsed,
+        )
+
+    def _switch_heater_delay_s(self, status: SwitchHeaterStatus) -> float:
+        if status == SwitchHeaterStatus.ON:
+            return self.config.ips.switch_on_delay_s
+        return self.config.ips.switch_off_delay_s
 
     def _temperature_loop_names(self, loop: str) -> set[str]:
         match loop:

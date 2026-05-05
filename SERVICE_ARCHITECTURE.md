@@ -36,6 +36,13 @@ The iPS model includes:
 - magnet temperature
 - PT1 temperature
 - PT2 temperature
+- switch heater state, target state, delay and readiness
+
+The switch heater uses the normal checked Mercury command `SWHT`. The forced
+command `SWHN` is not used by the service API. When the switch heater is turned
+on, the persistent switch is open/resistive and the magnet can be ramped after
+the configured delay. When it is turned off, the persistent switch is
+closed/superconducting after the configured delay.
 
 Electrical measurement services should own only their electrical instruments.
 They should read the latest cryostat state from the cryostat service instead of
@@ -71,6 +78,8 @@ The current implementation has two cryostat backends:
   - `POST /commands/abort`
   - `POST /commands/vti/gas/set-needle`
   - `POST /commands/vti/gas/set-pressure`
+  - `POST /commands/ips/switch-heater/on`
+  - `POST /commands/ips/switch-heater/off`
 
 ## Run
 
@@ -173,7 +182,9 @@ The configured Mercury modules are:
     "magnet_group": "GRPZ",
     "magnet_temperature": "MB1.T1",
     "pt1_temperature": "DB8.T1",
-    "pt2_temperature": "DB7.T1"
+    "pt2_temperature": "DB7.T1",
+    "switch_on_delay_s": 300.0,
+    "switch_off_delay_s": 300.0
   }
 }
 ```

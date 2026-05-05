@@ -95,6 +95,12 @@ class CryostatService:
         await self.poll_once()
         return self._state.to_dict()
 
+    async def set_switch_heater(self, enabled: bool) -> dict[str, Any]:
+        self._ensure_writable()
+        self.backend.set_switch_heater(enabled)
+        await self.poll_once()
+        return self._state.to_dict()
+
     async def poll_once(self) -> CryostatState:
         self._state = self._read_state_safely()
         data = self._state.to_dict()
@@ -263,6 +269,11 @@ def _flatten_state(data: dict[str, Any]) -> dict[str, Any]:
         "pt2_temperature_K": data["field"]["pt2_temperature_K"],
         "field_stable": data["field"]["stable"],
         "field_ramping": data["field"]["ramping"],
+        "switch_heater_status": data["switch_heater"]["status"],
+        "switch_heater_target_status": data["switch_heater"]["target_status"],
+        "switch_heater_ready": data["switch_heater"]["ready"],
+        "switch_heater_delay_s": data["switch_heater"]["delay_s"],
+        "switch_heater_elapsed_s": data["switch_heater"]["elapsed_s"],
         "pressure_mbar": data["pressure"]["mbar"],
         "pressure_target_mbar": data["pressure"]["target_mbar"],
         "needle_valve_percent": data["pressure"]["needle_valve_percent"],

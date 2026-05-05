@@ -30,6 +30,8 @@ class MercuryIPSConfig:
     magnet_temperature: str = "MB1.T1"
     pt1_temperature: str = "DB8.T1"
     pt2_temperature: str = "DB7.T1"
+    switch_on_delay_s: float = 300.0
+    switch_off_delay_s: float = 300.0
 
 
 @dataclass(slots=True)

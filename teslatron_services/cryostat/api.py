@@ -33,6 +33,10 @@ class DiagnosticQueryRequest(BaseModel):
     command: str
 
 
+class SwitchHeaterRequest(BaseModel):
+    enabled: bool
+
+
 def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
     service = CryostatService(config or load_config())
 
@@ -157,6 +161,27 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
             return await service.set_vti_pressure(request.pressure_mbar)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    @app.post("/commands/ips/switch-heater")
+    async def set_switch_heater(request: SwitchHeaterRequest) -> dict:
+        try:
+            return await service.set_switch_heater(request.enabled)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    @app.post("/commands/ips/switch-heater/on")
+    async def switch_heater_on() -> dict:
+        try:
+            return await service.set_switch_heater(True)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    @app.post("/commands/ips/switch-heater/off")
+    async def switch_heater_off() -> dict:
+        try:
+            return await service.set_switch_heater(False)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
 

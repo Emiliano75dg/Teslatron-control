@@ -24,7 +24,9 @@
       "magnet_group": "GRPZ",
       "magnet_temperature": "MB1.T1",
       "pt1_temperature": "DB8.T1",
-      "pt2_temperature": "DB7.T1"
+      "pt2_temperature": "DB7.T1",
+      "switch_on_delay_s": 300.0,
+      "switch_off_delay_s": 300.0
     },
     "safety": {
       "min_temperature_K": 0.0,

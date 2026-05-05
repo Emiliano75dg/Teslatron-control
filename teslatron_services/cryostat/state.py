@@ -32,6 +32,12 @@ class GasControlMode(StrEnum):
     PRESSURE_CONTROL = "PRESSURE_CONTROL"
 
 
+class SwitchHeaterStatus(StrEnum):
+    UNKNOWN = "UNKNOWN"
+    OFF = "OFF"
+    ON = "ON"
+
+
 @dataclass(slots=True)
 class PIDState:
     mode: str = "UNKNOWN"
@@ -76,6 +82,16 @@ class FieldState:
 
 
 @dataclass(slots=True)
+class SwitchHeaterState:
+    status: SwitchHeaterStatus = SwitchHeaterStatus.UNKNOWN
+    target_status: SwitchHeaterStatus = SwitchHeaterStatus.UNKNOWN
+    ready: bool = False
+    delay_s: float | None = None
+    last_changed_at: float | None = None
+    elapsed_s: float | None = None
+
+
+@dataclass(slots=True)
 class PressureState:
     mbar: float | None = None
     target_mbar: float | None = None
@@ -98,6 +114,7 @@ class CryostatState:
     mode: CryostatMode = CryostatMode.IDLE
     temperature: TemperatureState = dataclass_field(default_factory=TemperatureState)
     field: FieldState = dataclass_field(default_factory=FieldState)
+    switch_heater: SwitchHeaterState = dataclass_field(default_factory=SwitchHeaterState)
     pressure: PressureState = dataclass_field(default_factory=PressureState)
     safety: SafetyState = dataclass_field(default_factory=SafetyState)
     backend: str = "mock"
@@ -108,5 +125,7 @@ class CryostatState:
         data["mode"] = str(self.mode)
         data["temperature"]["sample"]["mode"] = str(self.temperature.sample.mode)
         data["temperature"]["vti"]["mode"] = str(self.temperature.vti.mode)
+        data["switch_heater"]["status"] = str(self.switch_heater.status)
+        data["switch_heater"]["target_status"] = str(self.switch_heater.target_status)
         data["pressure"]["mode"] = str(self.pressure.mode)
         return data
