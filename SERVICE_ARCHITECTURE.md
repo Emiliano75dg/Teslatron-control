@@ -11,6 +11,15 @@ The cryostat service owns the cryostat hardware:
 - Mercury iPS
 - environmental state such as temperature, field, pressure, heaters
 
+The iTC temperature model is split into two independent loops:
+
+- `sample`: sample/probe temperature loop
+- `vti`: VTI temperature loop
+
+Each loop has its own temperature, setpoint, rate, heater output, PID metadata,
+mode, stability and ramping state. This mirrors the LabVIEW split between
+Sample Loop Controls and VTI Loop Controls.
+
 Electrical measurement services should own only their electrical instruments.
 They should read the latest cryostat state from the cryostat service instead of
 opening iTC/iPS directly.
@@ -37,6 +46,8 @@ The current implementation has two cryostat backends:
 - streams state updates at `WS /ws/state`
 - accepts basic commands:
   - `POST /commands/ramp-temperature`
+  - `POST /commands/temperature/sample/ramp`
+  - `POST /commands/temperature/vti/ramp`
   - `POST /commands/ramp-field`
   - `POST /commands/hold`
   - `POST /commands/abort`
@@ -75,6 +86,22 @@ Ramp the temperature to 5 K in mock mode:
 
 ```bash
 curl -X POST http://127.0.0.1:8765/commands/ramp-temperature \
+  -H 'Content-Type: application/json' \
+  -d '{"target_K": 5.0, "rate_K_per_min": 1.0}'
+```
+
+Ramp only the sample loop:
+
+```bash
+curl -X POST http://127.0.0.1:8765/commands/temperature/sample/ramp \
+  -H 'Content-Type: application/json' \
+  -d '{"target_K": 5.0, "rate_K_per_min": 1.0}'
+```
+
+Ramp only the VTI loop:
+
+```bash
+curl -X POST http://127.0.0.1:8765/commands/temperature/vti/ramp \
   -H 'Content-Type: application/json' \
   -d '{"target_K": 5.0, "rate_K_per_min": 1.0}'
 ```

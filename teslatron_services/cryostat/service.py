@@ -49,10 +49,16 @@ class CryostatService:
     def unsubscribe(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
         self._subscribers.discard(queue)
 
-    async def ramp_temperature(self, target_K: float, rate_K_per_min: float) -> dict[str, Any]:
+    async def ramp_temperature(
+        self,
+        target_K: float,
+        rate_K_per_min: float,
+        loop: str = "both",
+    ) -> dict[str, Any]:
         self._ensure_writable()
+        self._validate_temperature_loop(loop)
         self._validate_temperature(target_K, rate_K_per_min)
-        self.backend.ramp_temperature(target_K, rate_K_per_min)
+        self.backend.ramp_temperature(target_K, rate_K_per_min, loop=loop)
         await self.poll_once()
         return self._state.to_dict()
 
@@ -151,6 +157,10 @@ class CryostatService:
         if rate_K_per_min <= 0 or rate_K_per_min > safety.max_temperature_rate_K_per_min:
             raise ValueError(f"Temperature rate out of range: {rate_K_per_min} K/min")
 
+    def _validate_temperature_loop(self, loop: str) -> None:
+        if loop not in {"sample", "vti", "both"}:
+            raise ValueError("Temperature loop must be 'sample', 'vti', or 'both'")
+
     def _validate_field(self, target_T: float, rate_T_per_min: float) -> None:
         safety = self.config.safety
         if abs(target_T) > safety.max_field_T:
@@ -187,16 +197,32 @@ class CryostatService:
 
 
 def _flatten_state(data: dict[str, Any]) -> dict[str, Any]:
+    sample = data["temperature"]["sample"]
+    vti = data["temperature"]["vti"]
     return {
         "timestamp": data["timestamp"],
         "mode": data["mode"],
         "backend": data["backend"],
-        "probe_K": data["temperature"]["probe_K"],
-        "vti_K": data["temperature"]["vti_K"],
-        "temperature_target_K": data["temperature"]["target_K"],
-        "temperature_rate_K_per_min": data["temperature"]["rate_K_per_min"],
-        "temperature_stable": data["temperature"]["stable"],
-        "temperature_ramping": data["temperature"]["ramping"],
+        "sample_temperature_K": sample["temperature_K"],
+        "sample_target_K": sample["target_K"],
+        "sample_rate_K_per_min": sample["rate_K_per_min"],
+        "sample_ramp_end_K": sample["ramp_end_K"],
+        "sample_heater_percent": sample["heater_percent"],
+        "sample_heater_power_W": sample["heater_power_W"],
+        "sample_heater_voltage_V": sample["heater_voltage_V"],
+        "sample_mode": sample["mode"],
+        "sample_stable": sample["stable"],
+        "sample_ramping": sample["ramping"],
+        "vti_temperature_K": vti["temperature_K"],
+        "vti_target_K": vti["target_K"],
+        "vti_rate_K_per_min": vti["rate_K_per_min"],
+        "vti_ramp_end_K": vti["ramp_end_K"],
+        "vti_heater_percent": vti["heater_percent"],
+        "vti_heater_power_W": vti["heater_power_W"],
+        "vti_heater_voltage_V": vti["heater_voltage_V"],
+        "vti_mode": vti["mode"],
+        "vti_stable": vti["stable"],
+        "vti_ramping": vti["ramping"],
         "B_T": data["field"]["B_T"],
         "field_target_T": data["field"]["target_T"],
         "field_rate_T_per_min": data["field"]["rate_T_per_min"],

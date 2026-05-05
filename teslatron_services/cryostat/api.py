@@ -74,6 +74,20 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
             return await service.ramp_temperature(
                 request.target_K,
                 request.rate_K_per_min,
+                loop="both",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    @app.post("/commands/temperature/{loop}/ramp")
+    async def ramp_temperature_loop(loop: str, request: RampTemperatureRequest) -> dict:
+        try:
+            return await service.ramp_temperature(
+                request.target_K,
+                request.rate_K_per_min,
+                loop=loop,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

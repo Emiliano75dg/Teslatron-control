@@ -6,7 +6,16 @@ import time
 from time import monotonic
 
 from .config import CryostatServiceConfig
-from .state import CryostatMode, CryostatState, FieldState, PressureState, TemperatureState
+from .state import (
+    CryostatMode,
+    CryostatState,
+    FieldState,
+    PIDState,
+    PressureState,
+    TemperatureControlMode,
+    TemperatureLoopState,
+    TemperatureState,
+)
 
 
 class CryostatBackend(ABC):
@@ -15,7 +24,12 @@ class CryostatBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def ramp_temperature(self, target_K: float, rate_K_per_min: float) -> None:
+    def ramp_temperature(
+        self,
+        target_K: float,
+        rate_K_per_min: float,
+        loop: str = "both",
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -43,9 +57,14 @@ class CryostatBackend(ABC):
 class MockCryostatBackend(CryostatBackend):
     def __init__(self, config: CryostatServiceConfig):
         self.config = config
-        self._temperature_K = 295.0
-        self._target_temperature_K = 295.0
-        self._temperature_rate_K_per_min = 1.0
+        self._sample_temperature_K = 295.0
+        self._sample_target_K = 295.0
+        self._sample_rate_K_per_min = 1.0
+        self._sample_mode = TemperatureControlMode.FIXED_TARGET
+        self._vti_temperature_K = 295.015
+        self._vti_target_K = 295.015
+        self._vti_rate_K_per_min = 1.0
+        self._vti_mode = TemperatureControlMode.FIXED_TARGET
         self._field_T = 0.0
         self._target_field_T = 0.0
         self._field_rate_T_per_min = 0.2
@@ -55,7 +74,9 @@ class MockCryostatBackend(CryostatBackend):
 
     def read_state(self) -> CryostatState:
         self._advance()
-        temp_ramping = abs(self._temperature_K - self._target_temperature_K) > 1e-3
+        sample_ramping = abs(self._sample_temperature_K - self._sample_target_K) > 1e-3
+        vti_ramping = abs(self._vti_temperature_K - self._vti_target_K) > 1e-3
+        temp_ramping = sample_ramping or vti_ramping
         field_ramping = abs(self._field_T - self._target_field_T) > 1e-4
 
         if self._aborted:
@@ -72,14 +93,30 @@ class MockCryostatBackend(CryostatBackend):
         return CryostatState(
             mode=mode,
             temperature=TemperatureState(
-                probe_K=round(self._temperature_K, 5),
-                vti_K=round(self._temperature_K + 0.015, 5),
-                target_K=self._target_temperature_K,
-                rate_K_per_min=self._temperature_rate_K_per_min,
-                probe_heater_percent=15.0 if temp_ramping else 3.0,
-                vti_heater_percent=12.0 if temp_ramping else 2.0,
-                stable=not temp_ramping,
-                ramping=temp_ramping,
+                sample=TemperatureLoopState(
+                    temperature_K=round(self._sample_temperature_K, 5),
+                    target_K=self._sample_target_K,
+                    rate_K_per_min=self._sample_rate_K_per_min,
+                    ramp_end_K=self._sample_target_K,
+                    heater_percent=15.0 if sample_ramping else 3.0,
+                    heater_power_W=0.8 if sample_ramping else 0.1,
+                    mode=self._sample_mode,
+                    pid=PIDState(mode="AUTO", p=10.0, i=1.0, d=0.0),
+                    stable=not sample_ramping,
+                    ramping=sample_ramping,
+                ),
+                vti=TemperatureLoopState(
+                    temperature_K=round(self._vti_temperature_K, 5),
+                    target_K=self._vti_target_K,
+                    rate_K_per_min=self._vti_rate_K_per_min,
+                    ramp_end_K=self._vti_target_K,
+                    heater_percent=12.0 if vti_ramping else 2.0,
+                    heater_power_W=3.0 if vti_ramping else 0.2,
+                    mode=self._vti_mode,
+                    pid=PIDState(mode="AUTO", p=25.0, i=1.0, d=0.0),
+                    stable=not vti_ramping,
+                    ramping=vti_ramping,
+                ),
             ),
             field=FieldState(
                 B_T=round(self._field_T, 6),
@@ -92,10 +129,21 @@ class MockCryostatBackend(CryostatBackend):
             backend="mock",
         )
 
-    def ramp_temperature(self, target_K: float, rate_K_per_min: float) -> None:
+    def ramp_temperature(
+        self,
+        target_K: float,
+        rate_K_per_min: float,
+        loop: str = "both",
+    ) -> None:
         self._aborted = False
-        self._target_temperature_K = target_K
-        self._temperature_rate_K_per_min = abs(rate_K_per_min)
+        if loop in {"sample", "both"}:
+            self._sample_target_K = target_K
+            self._sample_rate_K_per_min = abs(rate_K_per_min)
+            self._sample_mode = TemperatureControlMode.RAMP
+        if loop in {"vti", "both"}:
+            self._vti_target_K = target_K
+            self._vti_rate_K_per_min = abs(rate_K_per_min)
+            self._vti_mode = TemperatureControlMode.RAMP
         self._mode = CryostatMode.RAMPING_T
 
     def ramp_field(self, target_T: float, rate_T_per_min: float) -> None:
@@ -106,7 +154,8 @@ class MockCryostatBackend(CryostatBackend):
 
     def hold(self) -> None:
         self._advance()
-        self._target_temperature_K = self._temperature_K
+        self._sample_target_K = self._sample_temperature_K
+        self._vti_target_K = self._vti_temperature_K
         self._target_field_T = self._field_T
         self._mode = CryostatMode.HOLDING
 
@@ -136,10 +185,15 @@ class MockCryostatBackend(CryostatBackend):
         now = monotonic()
         dt = now - self._last_update
         self._last_update = now
-        self._temperature_K = _step_towards(
-            self._temperature_K,
-            self._target_temperature_K,
-            self._temperature_rate_K_per_min / 60.0 * dt,
+        self._sample_temperature_K = _step_towards(
+            self._sample_temperature_K,
+            self._sample_target_K,
+            self._sample_rate_K_per_min / 60.0 * dt,
+        )
+        self._vti_temperature_K = _step_towards(
+            self._vti_temperature_K,
+            self._vti_target_K,
+            self._vti_rate_K_per_min / 60.0 * dt,
         )
         self._field_T = _step_towards(
             self._field_T,
@@ -182,8 +236,10 @@ class MercuryCryostatBackend(CryostatBackend):
         self.config = config
         self.itc = MercuryResource(config.itc.address)
         self.ips = MercuryResource(config.ips.address)
-        self._temperature_target_K: float | None = None
-        self._temperature_rate_K_per_min: float | None = None
+        self._sample_target_K: float | None = None
+        self._sample_rate_K_per_min: float | None = None
+        self._vti_target_K: float | None = None
+        self._vti_rate_K_per_min: float | None = None
         self._field_target_T: float | None = None
         self._field_rate_T_per_min: float | None = None
         self._mode = CryostatMode.IDLE
@@ -228,11 +284,12 @@ class MercuryCryostatBackend(CryostatBackend):
             f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:RFLD?"
         )
 
-        target_K = _mean_available(probe_target_K, vti_target_K, self._temperature_target_K)
-        rate_K = _first_available(probe_rate, self._temperature_rate_K_per_min)
-        temp_ramping = _outside_tolerance(probe_K, target_K, 0.05) or _outside_tolerance(
-            vti_K, target_K, 0.05
+        vti_rate = self._read_itc_float(
+            f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:RSET?"
         )
+        sample_ramping = _outside_tolerance(probe_K, probe_target_K, 0.05)
+        vti_ramping = _outside_tolerance(vti_K, vti_target_K, 0.05)
+        temp_ramping = sample_ramping or vti_ramping
         field_ramping = _outside_tolerance(field_T, field_target_T, 0.005)
 
         if self._aborted:
@@ -249,14 +306,26 @@ class MercuryCryostatBackend(CryostatBackend):
         return CryostatState(
             mode=mode,
             temperature=TemperatureState(
-                probe_K=probe_K,
-                vti_K=vti_K,
-                target_K=target_K,
-                rate_K_per_min=rate_K,
-                probe_heater_percent=probe_heater,
-                vti_heater_percent=vti_heater,
-                stable=not temp_ramping,
-                ramping=temp_ramping,
+                sample=TemperatureLoopState(
+                    temperature_K=probe_K,
+                    target_K=probe_target_K,
+                    rate_K_per_min=_first_available(probe_rate, self._sample_rate_K_per_min),
+                    ramp_end_K=probe_target_K,
+                    heater_percent=probe_heater,
+                    mode=TemperatureControlMode.RAMP if sample_ramping else TemperatureControlMode.FIXED_TARGET,
+                    stable=not sample_ramping,
+                    ramping=sample_ramping,
+                ),
+                vti=TemperatureLoopState(
+                    temperature_K=vti_K,
+                    target_K=vti_target_K,
+                    rate_K_per_min=_first_available(vti_rate, self._vti_rate_K_per_min),
+                    ramp_end_K=vti_target_K,
+                    heater_percent=vti_heater,
+                    mode=TemperatureControlMode.RAMP if vti_ramping else TemperatureControlMode.FIXED_TARGET,
+                    stable=not vti_ramping,
+                    ramping=vti_ramping,
+                ),
             ),
             field=FieldState(
                 B_T=field_T,
@@ -269,15 +338,24 @@ class MercuryCryostatBackend(CryostatBackend):
             backend="mercury",
         )
 
-    def ramp_temperature(self, target_K: float, rate_K_per_min: float) -> None:
+    def ramp_temperature(
+        self,
+        target_K: float,
+        rate_K_per_min: float,
+        loop: str = "both",
+    ) -> None:
         self._aborted = False
-        self._temperature_target_K = target_K
-        self._temperature_rate_K_per_min = rate_K_per_min
-        for loop in {self.config.itc.probe_loop, self.config.itc.vti_loop}:
-            self.itc.set(f"SET:DEV:{loop}:TEMP:LOOP:RENA:ON")
-            self.itc.set(f"SET:DEV:{loop}:TEMP:LOOP:RSET:{rate_K_per_min:.9g}")
-            self.itc.set(f"SET:DEV:{loop}:TEMP:LOOP:TSET:{target_K:.9g}")
-            self.itc.set(f"SET:DEV:{loop}:TEMP:LOOP:ENAB:ON")
+        if loop in {"sample", "both"}:
+            self._sample_target_K = target_K
+            self._sample_rate_K_per_min = rate_K_per_min
+        if loop in {"vti", "both"}:
+            self._vti_target_K = target_K
+            self._vti_rate_K_per_min = rate_K_per_min
+        for mercury_loop in self._temperature_loop_names(loop):
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:RENA:ON")
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:RSET:{rate_K_per_min:.9g}")
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:TSET:{target_K:.9g}")
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:ENAB:ON")
         self._mode = CryostatMode.RAMPING_T
 
     def ramp_field(self, target_T: float, rate_T_per_min: float) -> None:
@@ -296,11 +374,16 @@ class MercuryCryostatBackend(CryostatBackend):
 
     def hold(self) -> None:
         state = self.read_state()
-        if state.temperature.probe_K is not None:
-            for loop in {self.config.itc.probe_loop, self.config.itc.vti_loop}:
-                self.itc.set(f"SET:DEV:{loop}:TEMP:LOOP:RENA:OFF")
-                self.itc.set(f"SET:DEV:{loop}:TEMP:LOOP:TSET:{state.temperature.probe_K:.9g}")
-                self.itc.set(f"SET:DEV:{loop}:TEMP:LOOP:ENAB:ON")
+        current_targets = {
+            self.config.itc.probe_loop: state.temperature.sample.temperature_K,
+            self.config.itc.vti_loop: state.temperature.vti.temperature_K,
+        }
+        for mercury_loop, target_K in current_targets.items():
+            if target_K is None:
+                continue
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:RENA:OFF")
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:TSET:{target_K:.9g}")
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:ENAB:ON")
         self.ips.set(f"SET:DEV:{self.config.ips.magnet_group}:PSU:ACTN:HOLD")
         self._mode = CryostatMode.HOLDING
 
@@ -355,6 +438,17 @@ class MercuryCryostatBackend(CryostatBackend):
         if command.startswith("READ:DEV:") and ":PSU:" in command:
             return self.ips.query(command)
         return self.itc.query(command)
+
+    def _temperature_loop_names(self, loop: str) -> set[str]:
+        match loop:
+            case "sample":
+                return {self.config.itc.probe_loop}
+            case "vti":
+                return {self.config.itc.vti_loop}
+            case "both":
+                return {self.config.itc.probe_loop, self.config.itc.vti_loop}
+            case _:
+                raise ValueError("Temperature loop must be 'sample', 'vti', or 'both'")
 
     def _read_itc_float(self, command: str) -> float | None:
         return _extract_float(self.itc.query(command))
