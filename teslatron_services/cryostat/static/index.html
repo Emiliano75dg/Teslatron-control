@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Teslatron Control</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Teslatron Control</h1>
+        <p id="subtitle">Cryostat service</p>
+      </div>
+      <div class="status-strip">
+        <span id="connectionBadge" class="badge neutral">Connecting</span>
+        <span id="backendBadge" class="badge">backend</span>
+        <span id="modeBadge" class="badge">mode</span>
+        <span id="safetyBadge" class="badge">safety</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel overview-panel">
+        <div class="panel-heading">
+          <h2>Environment</h2>
+          <span id="timestamp" class="muted">--</span>
+        </div>
+        <div class="summary-grid">
+          <div class="metric">
+            <span>Sample</span>
+            <strong id="sampleTemperature">--</strong>
+            <small id="sampleTarget">Target --</small>
+          </div>
+          <div class="metric">
+            <span>VTI</span>
+            <strong id="vtiTemperature">--</strong>
+            <small id="vtiTarget">Target --</small>
+          </div>
+          <div class="metric">
+            <span>Field</span>
+            <strong id="fieldValue">--</strong>
+            <small id="fieldTarget">Target --</small>
+          </div>
+          <div class="metric">
+            <span>Pressure</span>
+            <strong id="pressureValue">--</strong>
+            <small id="pressureTarget">Target --</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>ITC</h2>
+          <span class="muted">Sample and VTI loops</span>
+        </div>
+        <div class="loop-grid">
+          <article class="loop-block">
+            <h3>Sample</h3>
+            <dl>
+              <dt>Temperature</dt><dd id="sampleTemperatureDetail">--</dd>
+              <dt>Target</dt><dd id="sampleTargetDetail">--</dd>
+              <dt>Rate</dt><dd id="sampleRate">--</dd>
+              <dt>Heater</dt><dd id="sampleHeater">--</dd>
+              <dt>Mode</dt><dd id="sampleMode">--</dd>
+              <dt>State</dt><dd id="sampleState">--</dd>
+            </dl>
+          </article>
+          <article class="loop-block">
+            <h3>VTI</h3>
+            <dl>
+              <dt>Temperature</dt><dd id="vtiTemperatureDetail">--</dd>
+              <dt>Target</dt><dd id="vtiTargetDetail">--</dd>
+              <dt>Rate</dt><dd id="vtiRate">--</dd>
+              <dt>Heater</dt><dd id="vtiHeater">--</dd>
+              <dt>Mode</dt><dd id="vtiMode">--</dd>
+              <dt>State</dt><dd id="vtiState">--</dd>
+            </dl>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>IPS</h2>
+          <span class="muted">Magnet and switch heater</span>
+        </div>
+        <div class="field-grid">
+          <div class="gauge">
+            <div class="gauge-face">
+              <div id="fieldNeedle" class="needle"></div>
+            </div>
+            <strong id="fieldGaugeValue">--</strong>
+            <span>Magnetic field</span>
+          </div>
+          <dl class="dense-list">
+            <dt>Current</dt><dd id="fieldCurrent">--</dd>
+            <dt>Voltage</dt><dd id="fieldVoltage">--</dd>
+            <dt>Rate</dt><dd id="fieldRate">--</dd>
+            <dt>Magnet temp</dt><dd id="magnetTemperature">--</dd>
+            <dt>PT1 temp</dt><dd id="pt1Temperature">--</dd>
+            <dt>PT2 temp</dt><dd id="pt2Temperature">--</dd>
+            <dt>Switch heater</dt><dd id="switchHeater">--</dd>
+          </dl>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>VTI Gas</h2>
+          <span id="pressureMode" class="muted">--</span>
+        </div>
+        <div class="bar-row">
+          <span>Needle valve</span>
+          <div class="bar"><div id="needleBar"></div></div>
+          <strong id="needleValue">--</strong>
+        </div>
+        <dl class="dense-list two-col">
+          <dt>Pressure</dt><dd id="pressureDetail">--</dd>
+          <dt>Target</dt><dd id="pressureTargetDetail">--</dd>
+        </dl>
+      </section>
+
+      <section class="panel command-panel">
+        <div class="panel-heading">
+          <h2>Commands</h2>
+          <span id="readOnlyNotice" class="muted">--</span>
+        </div>
+        <form id="temperatureForm" class="command-form">
+          <label>Loop
+            <select name="loop">
+              <option value="sample">Sample</option>
+              <option value="vti">VTI</option>
+              <option value="both">Both</option>
+            </select>
+          </label>
+          <label>Target K
+            <input name="target_K" type="number" step="0.001" value="4.2">
+          </label>
+          <label>Rate K/min
+            <input name="rate_K_per_min" type="number" step="0.001" value="1">
+          </label>
+          <button type="submit">Ramp T</button>
+        </form>
+        <form id="fieldForm" class="command-form">
+          <label>Target T
+            <input name="target_T" type="number" step="0.0001" value="0">
+          </label>
+          <label>Rate T/min
+            <input name="rate_T_per_min" type="number" step="0.0001" value="0.1">
+          </label>
+          <button type="submit">Ramp B</button>
+        </form>
+        <div class="button-row">
+          <button id="holdButton" type="button">Hold</button>
+          <button id="abortButton" class="danger" type="button">Abort</button>
+        </div>
+        <p id="commandMessage" class="message"></p>
+      </section>
+
+      <section class="panel event-panel">
+        <div class="panel-heading">
+          <h2>Events</h2>
+          <button id="clearEvents" class="ghost" type="button">Clear</button>
+        </div>
+        <ol id="events" class="events"></ol>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

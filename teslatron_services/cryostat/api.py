@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .config import CryostatServiceConfig, load_config
@@ -39,6 +42,7 @@ class SwitchHeaterRequest(BaseModel):
 
 def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
     service = CryostatService(config or load_config())
+    static_dir = Path(__file__).with_name("static")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -50,6 +54,11 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
             await service.stop()
 
     app = FastAPI(title="Teslatron Cryostat Service", lifespan=lifespan)
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    @app.get("/")
+    async def index() -> FileResponse:
+        return FileResponse(static_dir / "index.html")
 
     @app.get("/health")
     async def health() -> dict[str, str]:
