@@ -44,10 +44,9 @@ function addEvent(message) {
 async function loadConfig() {
   const response = await fetch("/config");
   state.config = await response.json();
-  const cryostat = state.config.cryostat;
-  setText("subtitle", `${cryostat.backend} backend`);
-  setText("readOnlyNotice", cryostat.read_only ? "Read only" : "Writable mock/session");
-  setControlsEnabled(!cryostat.read_only);
+  setText("subtitle", `${state.config.backend} backend`);
+  setText("readOnlyNotice", state.config.read_only ? "Read only" : "Writable mock/session");
+  setControlsEnabled(!state.config.read_only);
 }
 
 function setControlsEnabled(enabled) {
