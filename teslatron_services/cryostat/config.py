@@ -32,6 +32,7 @@ class MercuryIPSConfig:
     pt2_temperature: str = "DB7.T1"
     switch_on_delay_s: float = 300.0
     switch_off_delay_s: float = 300.0
+    command_delay_s: float = 0.1
 
 
 @dataclass(slots=True)

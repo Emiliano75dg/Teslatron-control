@@ -69,6 +69,14 @@ class CryostatService:
         await self.poll_once()
         return self._state.to_dict()
 
+    async def ramp_to_zero(self, rate_T_per_min: float) -> dict[str, Any]:
+        self._ensure_writable()
+        # You might want to reuse or create a specific validation for the rate
+        self._validate_field(0.0, rate_T_per_min)
+        self.backend.ramp_to_zero(rate_T_per_min)
+        await self.poll_once()
+        return self._state.to_dict()
+
     async def hold(self) -> dict[str, Any]:
         self._ensure_writable()
         self.backend.hold()

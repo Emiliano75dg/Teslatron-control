@@ -43,6 +43,10 @@ class CryostatBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def ramp_to_zero(self, rate_T_per_min: float) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def hold(self) -> None:
         raise NotImplementedError
 
@@ -200,6 +204,12 @@ class MockCryostatBackend(CryostatBackend):
     def ramp_field(self, target_T: float, rate_T_per_min: float) -> None:
         self._aborted = False
         self._target_field_T = target_T
+        self._field_rate_T_per_min = abs(rate_T_per_min)
+        self._mode = CryostatMode.RAMPING_B
+
+    def ramp_to_zero(self, rate_T_per_min: float) -> None:
+        self._aborted = False
+        self._target_field_T = 0.0
         self._field_rate_T_per_min = abs(rate_T_per_min)
         self._mode = CryostatMode.RAMPING_B
 
@@ -647,20 +657,41 @@ class MercuryCryostatBackend(CryostatBackend):
         self._field_target_T = target_T
         self._field_rate_T_per_min = rate_T_per_min
         group = self.config.ips.magnet_group
+        delay = self.config.ips.command_delay_s
         self.ips.set(f"SET:DEV:{group}:PSU:ACTN:HOLD")
-        time.sleep(0.1)
+        time.sleep(delay)
         self.ips.set(f"SET:DEV:{group}:PSU:SIG:RFST:{rate_T_per_min:.9g}")
-        time.sleep(0.1)
+        time.sleep(delay)
         self.ips.set(f"SET:DEV:{group}:PSU:SIG:FSET:{target_T:.9g}")
-        time.sleep(0.1)
+        time.sleep(delay)
         self.ips.set(f"SET:DEV:{group}:PSU:ACTN:RTOS")
         self._mode = CryostatMode.RAMPING_B
 
+    def ramp_to_zero(self, rate_T_per_min: float) -> None:
+        self._aborted = False
+        self._field_target_T = 0.0
+        self._field_rate_T_per_min = rate_T_per_min
+        group = self.config.ips.magnet_group
+        delay = self.config.ips.command_delay_s
+        self.ips.set(f"SET:DEV:{group}:PSU:ACTN:HOLD")
+        time.sleep(delay)
+        self.ips.set(f"SET:DEV:{group}:PSU:SIG:RFST:{rate_T_per_min:.9g}")
+        time.sleep(delay)
+        self.ips.set(f"SET:DEV:{group}:PSU:ACTN:RTOZ")
+
     def hold(self) -> None:
-        state = self.read_state()
+        # Optimization: Instead of reading the full state (~20 queries),
+        # query only the current temperatures needed to set the hold targets.
+        probe_K = self._read_itc_float(
+            f"READ:DEV:{self.config.itc.probe_signal}:TEMP:SIG:TEMP?"
+        )
+        vti_K = self._read_itc_float(
+            f"READ:DEV:{self.config.itc.vti_signal}:TEMP:SIG:TEMP?"
+        )
+
         current_targets = {
-            self.config.itc.probe_loop: state.temperature.sample.temperature_K,
-            self.config.itc.vti_loop: state.temperature.vti.temperature_K,
+            self.config.itc.probe_loop: probe_K,
+            self.config.itc.vti_loop: vti_K,
         }
         for mercury_loop, target_K in current_targets.items():
             if target_K is None:

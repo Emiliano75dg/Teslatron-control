@@ -4,8 +4,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -20,6 +20,10 @@ class RampTemperatureRequest(BaseModel):
 
 class RampFieldRequest(BaseModel):
     target_T: float
+    rate_T_per_min: Annotated[float, Field(gt=0)]
+
+
+class RampToZeroRequest(BaseModel):
     rate_T_per_min: Annotated[float, Field(gt=0)]
 
 
@@ -40,6 +44,16 @@ class SwitchHeaterRequest(BaseModel):
     enabled: bool
 
 
+async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+async def permission_error_handler(
+    request: Request, exc: PermissionError
+) -> JSONResponse:
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
 def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
     service = CryostatService(config or load_config())
     static_dir = Path(__file__).with_name("static")
@@ -54,6 +68,8 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
             await service.stop()
 
     app = FastAPI(title="Teslatron Cryostat Service", lifespan=lifespan)
+    app.add_exception_handler(ValueError, value_error_handler)
+    app.add_exception_handler(PermissionError, permission_error_handler)
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     @app.get("/")
@@ -105,94 +121,52 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
 
     @app.post("/commands/ramp-temperature")
     async def ramp_temperature(request: RampTemperatureRequest) -> dict:
-        try:
-            return await service.ramp_temperature(
-                request.target_K,
-                request.rate_K_per_min,
-                loop="both",
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return await service.ramp_temperature(
+            request.target_K,
+            request.rate_K_per_min,
+            loop="both",
+        )
 
     @app.post("/commands/temperature/{loop}/ramp")
     async def ramp_temperature_loop(loop: str, request: RampTemperatureRequest) -> dict:
-        try:
-            return await service.ramp_temperature(
-                request.target_K,
-                request.rate_K_per_min,
-                loop=loop,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return await service.ramp_temperature(
+            request.target_K,
+            request.rate_K_per_min,
+            loop=loop,
+        )
 
     @app.post("/commands/ramp-field")
     async def ramp_field(request: RampFieldRequest) -> dict:
-        try:
-            return await service.ramp_field(
-                request.target_T,
-                request.rate_T_per_min,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return await service.ramp_field(
+            request.target_T,
+            request.rate_T_per_min,
+        )
+
+    @app.post("/commands/ramp-to-zero")
+    async def ramp_to_zero(request: RampToZeroRequest) -> dict:
+        return await service.ramp_to_zero(
+            request.rate_T_per_min,
+        )
 
     @app.post("/commands/hold")
     async def hold() -> dict:
-        try:
-            return await service.hold()
-        except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return await service.hold()
 
     @app.post("/commands/abort")
     async def abort() -> dict:
-        try:
-            return await service.abort()
-        except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return await service.abort()
 
     @app.post("/commands/vti/gas/set-needle")
     async def set_vti_needle(request: NeedleValveRequest) -> dict:
-        try:
-            return await service.set_vti_needle(request.needle_valve_percent)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return await service.set_vti_needle(request.needle_valve_percent)
 
     @app.post("/commands/vti/gas/set-pressure")
     async def set_vti_pressure(request: PressureRequest) -> dict:
-        try:
-            return await service.set_vti_pressure(request.pressure_mbar)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return await service.set_vti_pressure(request.pressure_mbar)
 
     @app.post("/commands/ips/switch-heater")
     async def set_switch_heater(request: SwitchHeaterRequest) -> dict:
-        try:
-            return await service.set_switch_heater(request.enabled)
-        except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
-
-    @app.post("/commands/ips/switch-heater/on")
-    async def switch_heater_on() -> dict:
-        try:
-            return await service.set_switch_heater(True)
-        except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
-
-    @app.post("/commands/ips/switch-heater/off")
-    async def switch_heater_off() -> dict:
-        try:
-            return await service.set_switch_heater(False)
-        except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return await service.set_switch_heater(request.enabled)
 
     @app.websocket("/ws/state")
     async def websocket_state(websocket: WebSocket) -> None:
