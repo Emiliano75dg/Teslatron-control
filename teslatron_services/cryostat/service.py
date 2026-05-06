@@ -160,10 +160,10 @@ class CryostatService:
         await queue.put(data)
 
     def _append_log(self, data: dict[str, Any]) -> None:
-        path = Path(self.config.log_path)
+        row = _flatten_state(data)
+        path = _compatible_log_path(Path(self.config.log_path), list(row.keys()))
         path.parent.mkdir(parents=True, exist_ok=True)
         exists = path.exists()
-        row = _flatten_state(data)
         with path.open("a", newline="") as file:
             writer = csv.DictWriter(file, fieldnames=list(row.keys()))
             if not exists:
@@ -281,3 +281,21 @@ def _flatten_state(data: dict[str, Any]) -> dict[str, Any]:
         "safety_level": data["safety"]["level"],
         "safety_message": data["safety"]["message"],
     }
+
+
+def _compatible_log_path(path: Path, fieldnames: list[str]) -> Path:
+    if _csv_header_matches(path, fieldnames):
+        return path
+    return path.with_name(f"{path.stem}_v2{path.suffix}")
+
+
+def _csv_header_matches(path: Path, fieldnames: list[str]) -> bool:
+    if not path.exists():
+        return True
+    with path.open(newline="") as file:
+        reader = csv.reader(file)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return True
+    return header == fieldnames
