@@ -123,6 +123,7 @@ h3 {
 }
 
 .overview-panel,
+.plot-panel,
 .command-panel,
 .event-panel {
   grid-column: span 12;
@@ -271,6 +272,99 @@ dd {
   background: #146bd1;
 }
 
+.plot-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.plot-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.plot-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #11171d;
+  color: #e9eef3;
+}
+
+.plot-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 42px;
+  margin-bottom: 8px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px 10px;
+  color: #cbd5df;
+  font-size: 12px;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend i {
+  width: 16px;
+  height: 3px;
+  display: inline-block;
+  border-radius: 3px;
+}
+
+.sample-line {
+  background: #f44336;
+}
+
+.vti-line {
+  background: #ffffff;
+}
+
+.magnet-line {
+  background: #52d273;
+}
+
+.pt1-line {
+  background: #24c6dc;
+}
+
+.pt2-line {
+  background: #ffd43b;
+}
+
+.field-line {
+  background: #00ff4c;
+}
+
+.pressure-line {
+  background: #ffb000;
+}
+
+.heater-line {
+  background: #c15cff;
+}
+
+canvas {
+  width: 100%;
+  height: 320px;
+  display: block;
+  background: #070b0f;
+  border: 1px solid #2f3b45;
+  border-radius: 6px;
+}
+
 .command-panel {
   display: grid;
   grid-template-columns: 1fr;
@@ -383,6 +477,7 @@ button.ghost {
   .summary-grid,
   .loop-grid,
   .field-grid,
+  .plot-grid,
   .command-form {
     grid-template-columns: 1fr;
   }

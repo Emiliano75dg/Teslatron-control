@@ -2,9 +2,11 @@ const state = {
   config: null,
   lastMode: null,
   lastError: null,
+  history: [],
 };
 
 const el = (id) => document.getElementById(id);
+const HISTORY_WINDOW_S = 10 * 60;
 
 function formatNumber(value, digits = 3) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) {
@@ -84,6 +86,8 @@ function render(data) {
   renderLoop("vti", vti);
   renderField(field, switchHeater);
   renderPressure(pressure);
+  recordHistory(data);
+  renderCharts();
 
   if (state.lastMode !== data.mode) {
     addEvent(`Mode ${data.mode}`);
@@ -93,6 +97,24 @@ function render(data) {
     addEvent(data.error);
     state.lastError = data.error;
   }
+}
+
+function recordHistory(data) {
+  state.history.push({
+    timestamp: data.timestamp,
+    sample_K: data.temperature.sample.temperature_K,
+    vti_K: data.temperature.vti.temperature_K,
+    magnet_K: data.field.magnet_temperature_K,
+    pt1_K: data.field.pt1_temperature_K,
+    pt2_K: data.field.pt2_temperature_K,
+    field_T: data.field.B_T,
+    pressure_mbar: data.pressure.mbar,
+    needle_percent: data.pressure.needle_valve_percent,
+  });
+  const cutoff = data.timestamp - HISTORY_WINDOW_S;
+  state.history = state.history.filter((point) => point.timestamp >= cutoff);
+  const minutes = Math.round(HISTORY_WINDOW_S / 60);
+  setText("plotWindow", `Last ${minutes} min, ${state.history.length} points`);
 }
 
 function renderLoop(prefix, loop) {
@@ -188,6 +210,11 @@ function bindCommands() {
   el("clearEvents").addEventListener("click", () => {
     el("events").replaceChildren();
   });
+  el("clearPlots").addEventListener("click", () => {
+    state.history = [];
+    renderCharts();
+    addEvent("Plots cleared");
+  });
 }
 
 async function runCommand(action, label) {
@@ -214,3 +241,220 @@ loadConfig()
     setBadge("connectionBadge", "Config error", "error");
     addEvent(error.message);
   });
+
+function renderCharts() {
+  drawTimeSeries(el("temperatureChart"), [
+    { key: "sample_K", label: "Sample", color: "#f44336" },
+    { key: "vti_K", label: "VTI", color: "#ffffff" },
+    { key: "magnet_K", label: "Magnet", color: "#52d273" },
+    { key: "pt1_K", label: "PT1", color: "#24c6dc" },
+    { key: "pt2_K", label: "PT2", color: "#ffd43b" },
+  ], "K");
+  drawTimeSeries(el("magneticsChart"), [
+    { key: "field_T", label: "Field", color: "#00ff4c", axis: "left" },
+    { key: "pressure_mbar", label: "Pressure", color: "#ffb000", axis: "right" },
+    { key: "needle_percent", label: "Needle", color: "#c15cff", axis: "right" },
+  ], "T", "mbar / %");
+}
+
+function drawTimeSeries(canvas, series, leftUnit, rightUnit = null) {
+  if (!canvas) {
+    return;
+  }
+  const ctx = canvas.getContext("2d");
+  const rect = canvas.getBoundingClientRect();
+  const scale = window.devicePixelRatio || 1;
+  const width = Math.max(420, Math.floor(rect.width * scale));
+  const height = Math.max(240, Math.floor(rect.height * scale));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "#070b0f";
+  ctx.fillRect(0, 0, width, height);
+
+  const padding = {
+    left: 58 * scale,
+    right: (rightUnit ? 58 : 18) * scale,
+    top: 18 * scale,
+    bottom: 34 * scale,
+  };
+  const plot = {
+    x: padding.left,
+    y: padding.top,
+    w: width - padding.left - padding.right,
+    h: height - padding.top - padding.bottom,
+  };
+
+  drawGrid(ctx, plot, width, height, scale);
+  if (state.history.length < 2) {
+    drawNoData(ctx, plot, scale);
+    return;
+  }
+
+  const minTime = state.history[0].timestamp;
+  const maxTime = state.history[state.history.length - 1].timestamp;
+  const leftSeries = series.filter((item) => item.axis !== "right");
+  const rightSeries = series.filter((item) => item.axis === "right");
+  const leftRange = valueRange(leftSeries);
+  const rightRange = rightSeries.length ? valueRange(rightSeries) : null;
+
+  drawAxisLabels(ctx, plot, scale, leftRange, leftUnit, rightRange, rightUnit);
+  drawTimeLabels(ctx, plot, scale, minTime, maxTime);
+
+  for (const item of series) {
+    const range = item.axis === "right" ? rightRange : leftRange;
+    if (!range) {
+      continue;
+    }
+    drawSeries(ctx, plot, minTime, maxTime, range, item);
+  }
+}
+
+function drawGrid(ctx, plot, width, height, scale) {
+  ctx.strokeStyle = "#24313c";
+  ctx.lineWidth = 1 * scale;
+  ctx.beginPath();
+  for (let i = 0; i <= 5; i += 1) {
+    const y = plot.y + (plot.h * i) / 5;
+    ctx.moveTo(plot.x, y);
+    ctx.lineTo(plot.x + plot.w, y);
+  }
+  for (let i = 0; i <= 6; i += 1) {
+    const x = plot.x + (plot.w * i) / 6;
+    ctx.moveTo(x, plot.y);
+    ctx.lineTo(x, plot.y + plot.h);
+  }
+  ctx.stroke();
+  ctx.strokeStyle = "#53616f";
+  ctx.strokeRect(plot.x, plot.y, plot.w, plot.h);
+  ctx.fillStyle = "#070b0f";
+  ctx.fillRect(0, 0, width, plot.y - 1);
+  ctx.fillRect(0, plot.y + plot.h + 1, width, height - plot.y - plot.h);
+}
+
+function drawNoData(ctx, plot, scale) {
+  ctx.fillStyle = "#93a2af";
+  ctx.font = `${13 * scale}px system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.fillText("Waiting for data", plot.x + plot.w / 2, plot.y + plot.h / 2);
+}
+
+function valueRange(series) {
+  const values = [];
+  for (const point of state.history) {
+    for (const item of series) {
+      const value = point[item.key];
+      if (value !== null && value !== undefined && Number.isFinite(Number(value))) {
+        values.push(Number(value));
+      }
+    }
+  }
+  if (!values.length) {
+    return { min: 0, max: 1 };
+  }
+  let min = Math.min(...values);
+  let max = Math.max(...values);
+  if (min === max) {
+    const pad = Math.max(Math.abs(min) * 0.05, 1);
+    min -= pad;
+    max += pad;
+  } else {
+    const pad = (max - min) * 0.08;
+    min -= pad;
+    max += pad;
+  }
+  return { min, max };
+}
+
+function drawAxisLabels(ctx, plot, scale, leftRange, leftUnit, rightRange, rightUnit) {
+  ctx.font = `${11 * scale}px ui-monospace, monospace`;
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#b8c4ce";
+  ctx.textAlign = "right";
+  for (let i = 0; i <= 5; i += 1) {
+    const value = leftRange.max - ((leftRange.max - leftRange.min) * i) / 5;
+    const y = plot.y + (plot.h * i) / 5;
+    ctx.fillText(compact(value), plot.x - 8 * scale, y);
+  }
+  ctx.save();
+  ctx.translate(14 * scale, plot.y + plot.h / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = "center";
+  ctx.fillText(leftUnit, 0, 0);
+  ctx.restore();
+
+  if (!rightRange || !rightUnit) {
+    return;
+  }
+  ctx.textAlign = "left";
+  for (let i = 0; i <= 5; i += 1) {
+    const value = rightRange.max - ((rightRange.max - rightRange.min) * i) / 5;
+    const y = plot.y + (plot.h * i) / 5;
+    ctx.fillText(compact(value), plot.x + plot.w + 8 * scale, y);
+  }
+  ctx.save();
+  ctx.translate(plot.x + plot.w + 45 * scale, plot.y + plot.h / 2);
+  ctx.rotate(Math.PI / 2);
+  ctx.textAlign = "center";
+  ctx.fillText(rightUnit, 0, 0);
+  ctx.restore();
+}
+
+function drawTimeLabels(ctx, plot, scale, minTime, maxTime) {
+  ctx.font = `${11 * scale}px ui-monospace, monospace`;
+  ctx.textBaseline = "top";
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#b8c4ce";
+  const labels = [
+    { x: plot.x, value: minTime },
+    { x: plot.x + plot.w / 2, value: (minTime + maxTime) / 2 },
+    { x: plot.x + plot.w, value: maxTime },
+  ];
+  for (const label of labels) {
+    ctx.fillText(new Date(label.value * 1000).toLocaleTimeString(), label.x, plot.y + plot.h + 10 * scale);
+  }
+}
+
+function drawSeries(ctx, plot, minTime, maxTime, range, item) {
+  const timeSpan = Math.max(maxTime - minTime, 1);
+  const valueSpan = Math.max(range.max - range.min, 1e-12);
+  ctx.strokeStyle = item.color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  let started = false;
+  for (const point of state.history) {
+    const value = point[item.key];
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+      started = false;
+      continue;
+    }
+    const x = plot.x + ((point.timestamp - minTime) / timeSpan) * plot.w;
+    const y = plot.y + (1 - (Number(value) - range.min) / valueSpan) * plot.h;
+    if (!started) {
+      ctx.moveTo(x, y);
+      started = true;
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.stroke();
+}
+
+function compact(value) {
+  const abs = Math.abs(value);
+  if (abs >= 1000 || (abs > 0 && abs < 0.01)) {
+    return value.toExponential(1);
+  }
+  if (abs >= 100) {
+    return value.toFixed(0);
+  }
+  if (abs >= 10) {
+    return value.toFixed(1);
+  }
+  return value.toFixed(3);
+}
+
+window.addEventListener("resize", renderCharts);

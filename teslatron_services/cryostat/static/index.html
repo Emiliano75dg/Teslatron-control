@@ -122,6 +122,42 @@
         </dl>
       </section>
 
+      <section class="panel plot-panel">
+        <div class="panel-heading">
+          <h2>Plots</h2>
+          <div class="plot-controls">
+            <span id="plotWindow" class="muted">Last 10 min</span>
+            <button id="clearPlots" class="ghost" type="button">Clear</button>
+          </div>
+        </div>
+        <div class="plot-grid">
+          <article class="plot-card">
+            <div class="plot-title">
+              <h3>Temperatures</h3>
+              <div class="legend">
+                <span><i class="sample-line"></i>Sample</span>
+                <span><i class="vti-line"></i>VTI</span>
+                <span><i class="magnet-line"></i>Magnet</span>
+                <span><i class="pt1-line"></i>PT1</span>
+                <span><i class="pt2-line"></i>PT2</span>
+              </div>
+            </div>
+            <canvas id="temperatureChart" width="900" height="320"></canvas>
+          </article>
+          <article class="plot-card">
+            <div class="plot-title">
+              <h3>Magnetics and Flow</h3>
+              <div class="legend">
+                <span><i class="field-line"></i>Field</span>
+                <span><i class="pressure-line"></i>Pressure</span>
+                <span><i class="heater-line"></i>Needle</span>
+              </div>
+            </div>
+            <canvas id="magneticsChart" width="900" height="320"></canvas>
+          </article>
+        </div>
+      </section>
+
       <section class="panel command-panel">
         <div class="panel-heading">
           <h2>Commands</h2>
