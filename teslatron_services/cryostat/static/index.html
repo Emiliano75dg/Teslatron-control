@@ -20,8 +20,16 @@
       </div>
     </header>
 
+    <nav class="tabs" aria-label="Dashboard views">
+      <button class="tab-button active" type="button" data-tab="overview">Overview</button>
+      <button class="tab-button" type="button" data-tab="itc">ITC</button>
+      <button class="tab-button" type="button" data-tab="ips">IPS</button>
+      <button class="tab-button" type="button" data-tab="plots">Plots</button>
+      <button class="tab-button" type="button" data-tab="commands">Commands</button>
+    </nav>
+
     <main class="layout">
-      <section class="panel overview-panel">
+      <section class="panel overview-panel view-section" data-view="overview">
         <div class="panel-heading">
           <h2>Environment</h2>
           <span id="timestamp" class="muted">--</span>
@@ -50,7 +58,7 @@
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel view-section hidden" data-view="itc">
         <div class="panel-heading">
           <h2>ITC</h2>
           <span class="muted">Sample and VTI loops</span>
@@ -63,6 +71,10 @@
               <dt>Target</dt><dd id="sampleTargetDetail">--</dd>
               <dt>Rate</dt><dd id="sampleRate">--</dd>
               <dt>Heater</dt><dd id="sampleHeater">--</dd>
+              <dt>Heater mode</dt><dd id="sampleHeaterMode">--</dd>
+              <dt>Loop</dt><dd id="sampleLoopEnabled">--</dd>
+              <dt>Ramp</dt><dd id="sampleRampEnabled">--</dd>
+              <dt>Target reached</dt><dd id="sampleTargetReached">--</dd>
               <dt>Mode</dt><dd id="sampleMode">--</dd>
               <dt>State</dt><dd id="sampleState">--</dd>
             </dl>
@@ -74,6 +86,10 @@
               <dt>Target</dt><dd id="vtiTargetDetail">--</dd>
               <dt>Rate</dt><dd id="vtiRate">--</dd>
               <dt>Heater</dt><dd id="vtiHeater">--</dd>
+              <dt>Heater mode</dt><dd id="vtiHeaterMode">--</dd>
+              <dt>Loop</dt><dd id="vtiLoopEnabled">--</dd>
+              <dt>Ramp</dt><dd id="vtiRampEnabled">--</dd>
+              <dt>Target reached</dt><dd id="vtiTargetReached">--</dd>
               <dt>Mode</dt><dd id="vtiMode">--</dd>
               <dt>State</dt><dd id="vtiState">--</dd>
             </dl>
@@ -81,7 +97,7 @@
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel view-section hidden" data-view="ips">
         <div class="panel-heading">
           <h2>IPS</h2>
           <span class="muted">Magnet and switch heater</span>
@@ -101,12 +117,16 @@
             <dt>Magnet temp</dt><dd id="magnetTemperature">--</dd>
             <dt>PT1 temp</dt><dd id="pt1Temperature">--</dd>
             <dt>PT2 temp</dt><dd id="pt2Temperature">--</dd>
+            <dt>Action</dt><dd id="fieldAction">--</dd>
+            <dt>At setpoint</dt><dd id="fieldAtSetpoint">--</dd>
+            <dt>At zero</dt><dd id="fieldAtZero">--</dd>
+            <dt>Clamped</dt><dd id="fieldClamped">--</dd>
             <dt>Switch heater</dt><dd id="switchHeater">--</dd>
           </dl>
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel view-section hidden" data-view="itc">
         <div class="panel-heading">
           <h2>VTI Gas</h2>
           <span id="pressureMode" class="muted">--</span>
@@ -122,7 +142,7 @@
         </dl>
       </section>
 
-      <section class="panel plot-panel">
+      <section class="panel plot-panel view-section hidden" data-view="plots">
         <div class="panel-heading">
           <h2>Plots</h2>
           <div class="plot-controls">
@@ -160,7 +180,7 @@
         </div>
       </section>
 
-      <section class="panel command-panel">
+      <section class="panel command-panel view-section hidden" data-view="commands">
         <div class="panel-heading">
           <h2>Commands</h2>
           <span id="readOnlyNotice" class="muted">--</span>
@@ -197,7 +217,7 @@
         <p id="commandMessage" class="message"></p>
       </section>
 
-      <section class="panel event-panel">
+      <section class="panel event-panel view-section" data-view="overview">
         <div class="panel-heading">
           <h2>Events</h2>
           <button id="clearEvents" class="ghost" type="button">Clear</button>

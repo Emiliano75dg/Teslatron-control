@@ -38,6 +38,14 @@ class SwitchHeaterStatus(StrEnum):
     ON = "ON"
 
 
+class MagnetAction(StrEnum):
+    UNKNOWN = "UNKNOWN"
+    HOLD = "HOLD"
+    TO_SET = "TO_SET"
+    TO_ZERO = "TO_ZERO"
+    CLAMP = "CLAMP"
+
+
 @dataclass(slots=True)
 class PIDState:
     mode: str = "UNKNOWN"
@@ -55,6 +63,10 @@ class TemperatureLoopState:
     heater_percent: float | None = None
     heater_power_W: float | None = None
     heater_voltage_V: float | None = None
+    heater_mode: str = "UNKNOWN"
+    loop_enabled: bool | None = None
+    ramp_enabled: bool | None = None
+    target_reached: bool | None = None
     mode: TemperatureControlMode = TemperatureControlMode.UNKNOWN
     pid: PIDState = dataclass_field(default_factory=PIDState)
     stable: bool = False
@@ -77,6 +89,10 @@ class FieldState:
     magnet_temperature_K: float | None = None
     pt1_temperature_K: float | None = None
     pt2_temperature_K: float | None = None
+    action: MagnetAction = MagnetAction.UNKNOWN
+    at_setpoint: bool | None = None
+    at_zero: bool | None = None
+    clamped: bool | None = None
     stable: bool = False
     ramping: bool = False
 
@@ -125,6 +141,7 @@ class CryostatState:
         data["mode"] = str(self.mode)
         data["temperature"]["sample"]["mode"] = str(self.temperature.sample.mode)
         data["temperature"]["vti"]["mode"] = str(self.temperature.vti.mode)
+        data["field"]["action"] = str(self.field.action)
         data["switch_heater"]["status"] = str(self.switch_heater.status)
         data["switch_heater"]["target_status"] = str(self.switch_heater.target_status)
         data["pressure"]["mode"] = str(self.pressure.mode)

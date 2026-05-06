@@ -20,6 +20,13 @@ function formatUnit(value, unit, digits = 3) {
   return formatted === "--" ? "--" : `${formatted} ${unit}`;
 }
 
+function formatBool(value) {
+  if (value === null || value === undefined) {
+    return "--";
+  }
+  return value ? "Yes" : "No";
+}
+
 function setText(id, value) {
   const node = el(id);
   if (node) {
@@ -124,6 +131,10 @@ function renderLoop(prefix, loop) {
   setText(`${prefix}TargetDetail`, formatUnit(loop.target_K, "K", 4));
   setText(`${prefix}Rate`, formatUnit(loop.rate_K_per_min, "K/min", 3));
   setText(`${prefix}Heater`, formatUnit(loop.heater_percent, "%", 2));
+  setText(`${prefix}HeaterMode`, loop.heater_mode || "--");
+  setText(`${prefix}LoopEnabled`, formatBool(loop.loop_enabled));
+  setText(`${prefix}RampEnabled`, formatBool(loop.ramp_enabled));
+  setText(`${prefix}TargetReached`, formatBool(loop.target_reached));
   setText(`${prefix}Mode`, loop.mode);
   setText(`${prefix}State`, loop.ramping ? "Ramping" : loop.stable ? "Stable" : "Tracking");
 }
@@ -136,6 +147,10 @@ function renderField(field, switchHeater) {
   setText("magnetTemperature", formatUnit(field.magnet_temperature_K, "K", 3));
   setText("pt1Temperature", formatUnit(field.pt1_temperature_K, "K", 3));
   setText("pt2Temperature", formatUnit(field.pt2_temperature_K, "K", 3));
+  setText("fieldAction", field.action || "--");
+  setText("fieldAtSetpoint", formatBool(field.at_setpoint));
+  setText("fieldAtZero", formatBool(field.at_zero));
+  setText("fieldClamped", formatBool(field.clamped));
   setText("switchHeater", `${switchHeater.status} ${switchHeater.ready ? "ready" : "waiting"}`);
   const normalized = Math.max(-1, Math.min(1, (field.B_T || 0) / 12));
   el("fieldNeedle").style.transform = `rotate(${normalized * 90}deg)`;
@@ -219,6 +234,23 @@ function bindCommands() {
   });
 }
 
+function bindTabs() {
+  document.querySelectorAll(".tab-button").forEach((button) => {
+    button.addEventListener("click", () => showTab(button.dataset.tab));
+  });
+  showTab("overview");
+}
+
+function showTab(tab) {
+  document.querySelectorAll(".tab-button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.tab === tab);
+  });
+  document.querySelectorAll(".view-section").forEach((section) => {
+    section.classList.toggle("hidden", section.dataset.view !== tab);
+  });
+  renderCharts();
+}
+
 async function runCommand(action, label) {
   const message = el("commandMessage");
   message.className = "message";
@@ -236,6 +268,7 @@ async function runCommand(action, label) {
 
 loadConfig()
   .then(() => {
+    bindTabs();
     bindCommands();
     connectWebSocket();
   })

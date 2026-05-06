@@ -13,6 +13,7 @@ from .state import (
     CryostatState,
     FieldState,
     GasControlMode,
+    MagnetAction,
     PIDState,
     PressureState,
     SwitchHeaterState,
@@ -104,6 +105,7 @@ class MockCryostatBackend(CryostatBackend):
         vti_ramping = abs(self._vti_temperature_K - self._vti_target_K) > 1e-3
         temp_ramping = sample_ramping or vti_ramping
         field_ramping = abs(self._field_T - self._target_field_T) > 1e-4
+        field_at_zero = abs(self._field_T) <= 1e-4
 
         if self._aborted:
             mode = CryostatMode.ABORTED
@@ -126,6 +128,10 @@ class MockCryostatBackend(CryostatBackend):
                     ramp_end_K=self._sample_target_K,
                     heater_percent=15.0 if sample_ramping else 3.0,
                     heater_power_W=0.8 if sample_ramping else 0.1,
+                    heater_mode="PID_AUTO",
+                    loop_enabled=True,
+                    ramp_enabled=self._sample_mode == TemperatureControlMode.RAMP,
+                    target_reached=not sample_ramping,
                     mode=self._sample_mode,
                     pid=PIDState(mode="AUTO", p=10.0, i=1.0, d=0.0),
                     stable=not sample_ramping,
@@ -138,6 +144,10 @@ class MockCryostatBackend(CryostatBackend):
                     ramp_end_K=self._vti_target_K,
                     heater_percent=12.0 if vti_ramping else 2.0,
                     heater_power_W=3.0 if vti_ramping else 0.2,
+                    heater_mode="PID_AUTO",
+                    loop_enabled=True,
+                    ramp_enabled=self._vti_mode == TemperatureControlMode.RAMP,
+                    target_reached=not vti_ramping,
                     mode=self._vti_mode,
                     pid=PIDState(mode="AUTO", p=25.0, i=1.0, d=0.0),
                     stable=not vti_ramping,
@@ -153,6 +163,10 @@ class MockCryostatBackend(CryostatBackend):
                 magnet_temperature_K=4.2,
                 pt1_temperature_K=3.82,
                 pt2_temperature_K=50.8,
+                action=MagnetAction.TO_SET if field_ramping else MagnetAction.HOLD,
+                at_setpoint=not field_ramping,
+                at_zero=field_at_zero,
+                clamped=False,
                 stable=not field_ramping,
                 ramping=field_ramping,
             ),
@@ -194,6 +208,8 @@ class MockCryostatBackend(CryostatBackend):
         self._sample_target_K = self._sample_temperature_K
         self._vti_target_K = self._vti_temperature_K
         self._target_field_T = self._field_T
+        self._sample_mode = TemperatureControlMode.FIXED_TARGET
+        self._vti_mode = TemperatureControlMode.FIXED_TARGET
         self._mode = CryostatMode.HOLDING
 
     def abort(self) -> None:
@@ -456,7 +472,10 @@ class MercuryCryostatBackend(CryostatBackend):
         probe_rate = self._read_itc_float(
             f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:RSET?"
         )
-        probe_ramp_enabled = self._read_itc_bool(
+        probe_loop_enabled = self._try_read_itc_bool(
+            f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:ENAB?"
+        )
+        probe_ramp_enabled = self._try_read_itc_bool(
             f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:RENA?"
         )
         probe_heater = self._read_itc_float(
@@ -490,6 +509,7 @@ class MercuryCryostatBackend(CryostatBackend):
         field_rate = self._read_ips_float(
             f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:RFLD?"
         )
+        magnet_action = self._read_magnet_action()
         magnet_temperature_K = self._read_ips_float(
             f"READ:DEV:{self.config.ips.magnet_temperature}:TEMP:SIG:TEMP?"
         )
@@ -504,13 +524,22 @@ class MercuryCryostatBackend(CryostatBackend):
         vti_rate = self._read_itc_float(
             f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:RSET?"
         )
-        vti_ramp_enabled = self._read_itc_bool(
+        vti_loop_enabled = self._try_read_itc_bool(
+            f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:ENAB?"
+        )
+        vti_ramp_enabled = self._try_read_itc_bool(
             f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:RENA?"
         )
-        sample_ramping = _outside_tolerance(probe_K, probe_target_K, 0.05)
-        vti_ramping = _outside_tolerance(vti_K, vti_target_K, 0.05)
+        sample_target_reached = not _outside_tolerance(probe_K, probe_target_K, 0.05)
+        vti_target_reached = not _outside_tolerance(vti_K, vti_target_K, 0.05)
+        sample_ramping = bool(probe_ramp_enabled) and not sample_target_reached
+        vti_ramping = bool(vti_ramp_enabled) and not vti_target_reached
         temp_ramping = sample_ramping or vti_ramping
-        field_ramping = _outside_tolerance(field_T, field_target_T, 0.005)
+        field_at_setpoint = not _outside_tolerance(field_T, field_target_T, 0.005)
+        field_ramping = not field_at_setpoint or magnet_action in {
+            MagnetAction.TO_SET,
+            MagnetAction.TO_ZERO,
+        }
 
         if self._aborted:
             mode = CryostatMode.ABORTED
@@ -532,10 +561,17 @@ class MercuryCryostatBackend(CryostatBackend):
                     rate_K_per_min=_first_available(probe_rate, self._sample_rate_K_per_min),
                     ramp_end_K=probe_target_K,
                     heater_percent=probe_heater,
+                    heater_mode=_temperature_heater_mode(
+                        probe_loop_enabled,
+                        probe_ramp_enabled,
+                    ),
+                    loop_enabled=probe_loop_enabled,
+                    ramp_enabled=probe_ramp_enabled,
+                    target_reached=sample_target_reached,
                     mode=TemperatureControlMode.RAMP
                     if probe_ramp_enabled
                     else TemperatureControlMode.FIXED_TARGET,
-                    stable=not sample_ramping,
+                    stable=sample_target_reached,
                     ramping=sample_ramping,
                 ),
                 vti=TemperatureLoopState(
@@ -544,10 +580,17 @@ class MercuryCryostatBackend(CryostatBackend):
                     rate_K_per_min=_first_available(vti_rate, self._vti_rate_K_per_min),
                     ramp_end_K=vti_target_K,
                     heater_percent=vti_heater,
+                    heater_mode=_temperature_heater_mode(
+                        vti_loop_enabled,
+                        vti_ramp_enabled,
+                    ),
+                    loop_enabled=vti_loop_enabled,
+                    ramp_enabled=vti_ramp_enabled,
+                    target_reached=vti_target_reached,
                     mode=TemperatureControlMode.RAMP
                     if vti_ramp_enabled
                     else TemperatureControlMode.FIXED_TARGET,
-                    stable=not vti_ramping,
+                    stable=vti_target_reached,
                     ramping=vti_ramping,
                 ),
             ),
@@ -560,7 +603,11 @@ class MercuryCryostatBackend(CryostatBackend):
                 magnet_temperature_K=magnet_temperature_K,
                 pt1_temperature_K=pt1_temperature_K,
                 pt2_temperature_K=pt2_temperature_K,
-                stable=not field_ramping,
+                action=magnet_action,
+                at_setpoint=field_at_setpoint,
+                at_zero=_inside_tolerance(field_T, 0.0, 0.005),
+                clamped=magnet_action == MagnetAction.CLAMP,
+                stable=field_at_setpoint,
                 ramping=field_ramping,
             ),
             switch_heater=self._switch_heater_state(switch_heater_status),
@@ -697,6 +744,8 @@ class MercuryCryostatBackend(CryostatBackend):
             "itc_vti_setpoint": ("itc", f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:TSET?"),
             "itc_probe_rate": ("itc", f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:RSET?"),
             "itc_vti_rate": ("itc", f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:RSET?"),
+            "itc_probe_loop_enabled": ("itc", f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:ENAB?"),
+            "itc_vti_loop_enabled": ("itc", f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:ENAB?"),
             "itc_probe_ramp_enabled": ("itc", f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:RENA?"),
             "itc_vti_ramp_enabled": ("itc", f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:RENA?"),
             "itc_pressure": ("itc", f"READ:DEV:{self.config.itc.pressure}:PRES:SIG:PRES?"),
@@ -707,6 +756,7 @@ class MercuryCryostatBackend(CryostatBackend):
             "ips_voltage": ("ips", f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:VOLT?"),
             "ips_field_setpoint": ("ips", f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FSET?"),
             "ips_field_rate": ("ips", f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:RFLD?"),
+            "ips_action": ("ips", f"READ:DEV:{self.config.ips.magnet_group}:PSU:ACTN?"),
             "ips_switch_heater": ("ips", f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:SWHT?"),
             "ips_magnet_temperature": ("ips", f"READ:DEV:{self.config.ips.magnet_temperature}:TEMP:SIG:TEMP?"),
             "ips_pt1_temperature": ("ips", f"READ:DEV:{self.config.ips.pt1_temperature}:TEMP:SIG:TEMP?"),
@@ -715,7 +765,7 @@ class MercuryCryostatBackend(CryostatBackend):
         return {
             name: {
                 "command": command,
-                "response": self._diagnostic_resource(target).query(command),
+                "response": self._diagnostic_response(target, command),
             }
             for name, (target, command) in commands.items()
         }
@@ -752,6 +802,12 @@ class MercuryCryostatBackend(CryostatBackend):
             case _:
                 raise ValueError("Diagnostic target must be 'itc' or 'ips'")
 
+    def _diagnostic_response(self, target: str, command: str) -> str:
+        try:
+            return self._diagnostic_resource(target).query(command)
+        except MercuryQueryError as exc:
+            return f"ERROR:{exc.original_type}:{exc.original_message}"
+
     def _read_switch_heater_status(self) -> SwitchHeaterStatus:
         response = self.ips.query(
             f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:SWHT?"
@@ -762,6 +818,25 @@ class MercuryCryostatBackend(CryostatBackend):
         if token.endswith("OFF"):
             return SwitchHeaterStatus.OFF
         return SwitchHeaterStatus.UNKNOWN
+
+    def _read_magnet_action(self) -> MagnetAction:
+        response = self._try_read_ips(
+            f"READ:DEV:{self.config.ips.magnet_group}:PSU:ACTN?"
+        )
+        if response is None:
+            return MagnetAction.UNKNOWN
+        token = response.split(":")[-1].strip().upper()
+        match token:
+            case "HOLD":
+                return MagnetAction.HOLD
+            case "RTOS" | "TO SET" | "TO_SET":
+                return MagnetAction.TO_SET
+            case "RTOZ" | "TO ZERO" | "TO_ZERO":
+                return MagnetAction.TO_ZERO
+            case "CLMP" | "CLAMP":
+                return MagnetAction.CLAMP
+            case _:
+                return MagnetAction.UNKNOWN
 
     def _switch_heater_state(self, status: SwitchHeaterStatus) -> SwitchHeaterState:
         target = (
@@ -807,8 +882,20 @@ class MercuryCryostatBackend(CryostatBackend):
     def _read_itc_bool(self, command: str) -> bool:
         return _extract_bool(self.itc.query(command))
 
+    def _try_read_itc_bool(self, command: str) -> bool | None:
+        try:
+            return self._read_itc_bool(command)
+        except MercuryQueryError:
+            return None
+
     def _read_ips_float(self, command: str) -> float | None:
         return _extract_float(self.ips.query(command))
+
+    def _try_read_ips(self, command: str) -> str | None:
+        try:
+            return self.ips.query(command)
+        except MercuryQueryError:
+            return None
 
 
 def _extract_float(response: str) -> float | None:
@@ -839,6 +926,25 @@ def _outside_tolerance(value: float | None, target: float | None, tolerance: flo
     if value is None or target is None:
         return False
     return abs(value - target) > tolerance
+
+
+def _inside_tolerance(value: float | None, target: float, tolerance: float) -> bool | None:
+    if value is None:
+        return None
+    return abs(value - target) <= tolerance
+
+
+def _temperature_heater_mode(
+    loop_enabled: bool | None,
+    ramp_enabled: bool | None,
+) -> str:
+    if loop_enabled is False:
+        return "OFF"
+    if ramp_enabled is True:
+        return "RAMP"
+    if loop_enabled is True:
+        return "PID_OR_FIXED_TARGET"
+    return "UNKNOWN"
 
 
 def create_backend(config: CryostatServiceConfig) -> CryostatBackend:

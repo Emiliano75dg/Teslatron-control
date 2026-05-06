@@ -82,6 +82,28 @@ h3 {
   font-weight: 650;
 }
 
+.tabs {
+  display: flex;
+  gap: 6px;
+  padding: 10px 14px 0;
+  background: var(--bg);
+  overflow-x: auto;
+}
+
+.tab-button {
+  min-width: 96px;
+  min-height: 34px;
+  background: #dbe3ea;
+  color: #24313c;
+  border-color: #b8c4cf;
+}
+
+.tab-button.active {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: #075569;
+}
+
 .badge.ok {
   background: #e7f5ec;
   color: #17643b;
@@ -111,6 +133,10 @@ h3 {
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 14px;
   padding: 14px;
+}
+
+.view-section.hidden {
+  display: none;
 }
 
 .panel {
