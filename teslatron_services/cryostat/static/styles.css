@@ -348,6 +348,14 @@ dd {
   background: #00ff4c;
 }
 
+.current-line {
+  background: #4cc9f0;
+}
+
+.voltage-line {
+  background: #f72585;
+}
+
 .pressure-line {
   background: #ffb000;
 }

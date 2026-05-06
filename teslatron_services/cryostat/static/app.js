@@ -108,6 +108,8 @@ function recordHistory(data) {
     pt1_K: data.field.pt1_temperature_K,
     pt2_K: data.field.pt2_temperature_K,
     field_T: data.field.B_T,
+    current_A: data.field.output_current_A,
+    voltage_V: data.field.output_voltage_V,
     pressure_mbar: data.pressure.mbar,
     needle_percent: data.pressure.needle_valve_percent,
   });
@@ -252,9 +254,11 @@ function renderCharts() {
   ], "K");
   drawTimeSeries(el("magneticsChart"), [
     { key: "field_T", label: "Field", color: "#00ff4c", axis: "left" },
+    { key: "current_A", label: "Current", color: "#4cc9f0", axis: "left" },
+    { key: "voltage_V", label: "Voltage", color: "#f72585", axis: "left" },
     { key: "pressure_mbar", label: "Pressure", color: "#ffb000", axis: "right" },
     { key: "needle_percent", label: "Needle", color: "#c15cff", axis: "right" },
-  ], "T", "mbar / %");
+  ], "T / A / V", "mbar / %");
 }
 
 function drawTimeSeries(canvas, series, leftUnit, rightUnit = null) {
