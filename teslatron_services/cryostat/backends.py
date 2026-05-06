@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import re
+import socket
+import threading
 import time
 from time import monotonic, time as unix_time
 
@@ -297,29 +299,97 @@ class MercuryResource:
         read_termination: str = "\n",
         write_termination: str = "\n",
     ):
-        import pyvisa
-
         self.address = address
         self.timeout_ms = timeout_ms
         self.read_termination = read_termination
         self.write_termination = write_termination
-        self.resource_manager = pyvisa.ResourceManager()
-        self.instrument = self.resource_manager.open_resource(
-            address,
-            read_termination=read_termination,
-            write_termination=write_termination,
-        )
-        self.instrument.timeout = timeout_ms
+        self.socket_endpoint = self._parse_socket_address(address)
+        self.socket_connection: socket.socket | None = None
+        self._last_socket_query_at = 0.0
+        self._query_lock = threading.Lock()
+        self.resource_manager = None
+        self.instrument = None
+        if self.socket_endpoint is None:
+            import pyvisa
+
+            self.resource_manager = pyvisa.ResourceManager()
+            self.instrument = self.resource_manager.open_resource(
+                address,
+                read_termination=read_termination,
+                write_termination=write_termination,
+            )
+            self.instrument.timeout = timeout_ms
 
     def query(self, command: str) -> str:
-        try:
-            return self.instrument.query(command)
-        except Exception as exc:
-            raise MercuryQueryError(self.address, command, exc) from exc
+        with self._query_lock:
+            try:
+                if self.socket_endpoint is not None:
+                    return self._socket_query(command)
+                if self.instrument is None:
+                    raise RuntimeError("VISA instrument is not open")
+                return self.instrument.query(command)
+            except Exception as exc:
+                raise MercuryQueryError(self.address, command, exc) from exc
 
     def set(self, command: str) -> str:
         # Mercury controllers answer SET commands; using query keeps buffers aligned.
         return self.query(command)
+
+    def _socket_query(self, command: str) -> str:
+        self._respect_message_interval()
+        try:
+            return self._socket_query_once(command)
+        except OSError:
+            self._close_socket_connection()
+            return self._socket_query_once(command)
+
+    def _socket_query_once(self, command: str) -> str:
+        connection = self._socket()
+        timeout_s = self.timeout_ms / 1000.0
+        write_termination = self.write_termination.encode()
+        read_termination = self.read_termination.encode()
+        payload = command.encode() + write_termination
+        connection.settimeout(timeout_s)
+        connection.sendall(payload)
+        self._last_socket_query_at = monotonic()
+        chunks = []
+        while True:
+            chunk = connection.recv(4096)
+            if not chunk:
+                raise ConnectionResetError("Mercury socket closed before response")
+            chunks.append(chunk)
+            if read_termination and chunk.endswith(read_termination):
+                break
+        return b"".join(chunks).decode(errors="replace")
+
+    def _socket(self) -> socket.socket:
+        if self.socket_connection is None:
+            if self.socket_endpoint is None:
+                raise RuntimeError("Socket endpoint is not configured")
+            host, port = self.socket_endpoint
+            timeout_s = self.timeout_ms / 1000.0
+            self.socket_connection = socket.create_connection((host, port), timeout=timeout_s)
+        return self.socket_connection
+
+    def _close_socket_connection(self) -> None:
+        if self.socket_connection is None:
+            return
+        try:
+            self.socket_connection.close()
+        finally:
+            self.socket_connection = None
+
+    def _respect_message_interval(self) -> None:
+        elapsed = monotonic() - self._last_socket_query_at
+        if elapsed < 0.005:
+            time.sleep(0.005 - elapsed)
+
+    @staticmethod
+    def _parse_socket_address(address: str) -> tuple[str, int] | None:
+        match = re.fullmatch(r"TCPIP\d*::([^:]+)::(\d+)::SOCKET", address)
+        if match is None:
+            return None
+        return match.group(1), int(match.group(2))
 
 
 class MercuryQueryError(RuntimeError):
@@ -386,6 +456,9 @@ class MercuryCryostatBackend(CryostatBackend):
         probe_rate = self._read_itc_float(
             f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:RSET?"
         )
+        probe_ramp_enabled = self._read_itc_bool(
+            f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:RENA?"
+        )
         probe_heater = self._read_itc_float(
             f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:HSET?"
         )
@@ -431,6 +504,9 @@ class MercuryCryostatBackend(CryostatBackend):
         vti_rate = self._read_itc_float(
             f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:RSET?"
         )
+        vti_ramp_enabled = self._read_itc_bool(
+            f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:RENA?"
+        )
         sample_ramping = _outside_tolerance(probe_K, probe_target_K, 0.05)
         vti_ramping = _outside_tolerance(vti_K, vti_target_K, 0.05)
         temp_ramping = sample_ramping or vti_ramping
@@ -456,7 +532,9 @@ class MercuryCryostatBackend(CryostatBackend):
                     rate_K_per_min=_first_available(probe_rate, self._sample_rate_K_per_min),
                     ramp_end_K=probe_target_K,
                     heater_percent=probe_heater,
-                    mode=TemperatureControlMode.RAMP if sample_ramping else TemperatureControlMode.FIXED_TARGET,
+                    mode=TemperatureControlMode.RAMP
+                    if probe_ramp_enabled
+                    else TemperatureControlMode.FIXED_TARGET,
                     stable=not sample_ramping,
                     ramping=sample_ramping,
                 ),
@@ -466,7 +544,9 @@ class MercuryCryostatBackend(CryostatBackend):
                     rate_K_per_min=_first_available(vti_rate, self._vti_rate_K_per_min),
                     ramp_end_K=vti_target_K,
                     heater_percent=vti_heater,
-                    mode=TemperatureControlMode.RAMP if vti_ramping else TemperatureControlMode.FIXED_TARGET,
+                    mode=TemperatureControlMode.RAMP
+                    if vti_ramp_enabled
+                    else TemperatureControlMode.FIXED_TARGET,
                     stable=not vti_ramping,
                     ramping=vti_ramping,
                 ),
@@ -611,29 +691,33 @@ class MercuryCryostatBackend(CryostatBackend):
 
     def raw_readings(self) -> dict:
         commands = {
-            "itc_probe_temp": f"READ:DEV:{self.config.itc.probe_signal}:TEMP:SIG:TEMP?",
-            "itc_vti_temp": f"READ:DEV:{self.config.itc.vti_signal}:TEMP:SIG:TEMP?",
-            "itc_probe_setpoint": f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:TSET?",
-            "itc_vti_setpoint": f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:TSET?",
-            "itc_pressure": f"READ:DEV:{self.config.itc.pressure}:PRES:SIG:PRES?",
-            "itc_pressure_setpoint": f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:PRST?",
-            "itc_needle_valve": f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:FSET?",
-            "ips_field": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FLD?",
-            "ips_current": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:CURR?",
-            "ips_voltage": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:VOLT?",
-            "ips_field_setpoint": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FSET?",
-            "ips_field_rate": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:RFLD?",
-            "ips_switch_heater": f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:SWHT?",
-            "ips_magnet_temperature": f"READ:DEV:{self.config.ips.magnet_temperature}:TEMP:SIG:TEMP?",
-            "ips_pt1_temperature": f"READ:DEV:{self.config.ips.pt1_temperature}:TEMP:SIG:TEMP?",
-            "ips_pt2_temperature": f"READ:DEV:{self.config.ips.pt2_temperature}:TEMP:SIG:TEMP?",
+            "itc_probe_temp": ("itc", f"READ:DEV:{self.config.itc.probe_signal}:TEMP:SIG:TEMP?"),
+            "itc_vti_temp": ("itc", f"READ:DEV:{self.config.itc.vti_signal}:TEMP:SIG:TEMP?"),
+            "itc_probe_setpoint": ("itc", f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:TSET?"),
+            "itc_vti_setpoint": ("itc", f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:TSET?"),
+            "itc_probe_rate": ("itc", f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:RSET?"),
+            "itc_vti_rate": ("itc", f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:RSET?"),
+            "itc_probe_ramp_enabled": ("itc", f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:RENA?"),
+            "itc_vti_ramp_enabled": ("itc", f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:RENA?"),
+            "itc_pressure": ("itc", f"READ:DEV:{self.config.itc.pressure}:PRES:SIG:PRES?"),
+            "itc_pressure_setpoint": ("itc", f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:PRST?"),
+            "itc_needle_valve": ("itc", f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:FSET?"),
+            "ips_field": ("ips", f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FLD?"),
+            "ips_current": ("ips", f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:CURR?"),
+            "ips_voltage": ("ips", f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:VOLT?"),
+            "ips_field_setpoint": ("ips", f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FSET?"),
+            "ips_field_rate": ("ips", f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:RFLD?"),
+            "ips_switch_heater": ("ips", f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:SWHT?"),
+            "ips_magnet_temperature": ("ips", f"READ:DEV:{self.config.ips.magnet_temperature}:TEMP:SIG:TEMP?"),
+            "ips_pt1_temperature": ("ips", f"READ:DEV:{self.config.ips.pt1_temperature}:TEMP:SIG:TEMP?"),
+            "ips_pt2_temperature": ("ips", f"READ:DEV:{self.config.ips.pt2_temperature}:TEMP:SIG:TEMP?"),
         }
         return {
             name: {
                 "command": command,
-                "response": self._query_for_diagnostics(command),
+                "response": self._diagnostic_resource(target).query(command),
             }
-            for name, command in commands.items()
+            for name, (target, command) in commands.items()
         }
 
     def diagnostic_query(self, target: str, command: str) -> dict:
@@ -720,15 +804,24 @@ class MercuryCryostatBackend(CryostatBackend):
     def _read_itc_float(self, command: str) -> float | None:
         return _extract_float(self.itc.query(command))
 
+    def _read_itc_bool(self, command: str) -> bool:
+        return _extract_bool(self.itc.query(command))
+
     def _read_ips_float(self, command: str) -> float | None:
         return _extract_float(self.ips.query(command))
 
 
 def _extract_float(response: str) -> float | None:
-    matches = re.findall(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", response)
+    value_token = response.rsplit(":", 1)[-1]
+    matches = re.findall(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", value_token)
     if not matches:
         return None
     return float(matches[-1])
+
+
+def _extract_bool(response: str) -> bool:
+    token = response.rsplit(":", 1)[-1].strip().upper()
+    return token == "ON"
 
 
 def _first_available(*values: float | None) -> float | None:
