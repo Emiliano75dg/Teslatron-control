@@ -74,12 +74,12 @@ The current implementation has two cryostat backends:
   - `POST /commands/temperature/sample/ramp`
   - `POST /commands/temperature/vti/ramp`
   - `POST /commands/ramp-field`
+  - `POST /commands/ramp-to-zero`
   - `POST /commands/hold`
   - `POST /commands/abort`
   - `POST /commands/vti/gas/set-needle`
   - `POST /commands/vti/gas/set-pressure`
-  - `POST /commands/ips/switch-heater/on`
-  - `POST /commands/ips/switch-heater/off`
+  - `POST /commands/ips/switch-heater`
 
 ## Run
 
@@ -149,6 +149,22 @@ Set VTI pressure target:
 curl -X POST http://127.0.0.1:8765/commands/vti/gas/set-pressure \
   -H 'Content-Type: application/json' \
   -d '{"pressure_mbar": 10.0}'
+```
+
+Ramp the field back to zero:
+
+```bash
+curl -X POST http://127.0.0.1:8765/commands/ramp-to-zero \
+  -H 'Content-Type: application/json' \
+  -d '{"rate_T_per_min": 0.3}'
+```
+
+Turn the persistent switch heater on:
+
+```bash
+curl -X POST http://127.0.0.1:8765/commands/ips/switch-heater \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled": true}'
 ```
 
 ## Next step
