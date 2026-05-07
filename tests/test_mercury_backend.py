@@ -1,12 +1,12 @@
 import unittest
 from unittest import mock
-from types import SimpleNamespace
 
 from teslatron_services.cryostat.backends import (
     GasControlMode,
     MercuryCryostatBackend,
     MercuryResource,
     SwitchHeaterStatus,
+    _field_rate_with_low_field_cap,
     _pressure_mode_from_loop_state,
     _within_tolerance,
 )
@@ -29,6 +29,7 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
     def make_backend(self) -> MercuryCryostatBackend:
         backend = MercuryCryostatBackend.__new__(MercuryCryostatBackend)
         backend.config = CryostatServiceConfig()
+        backend.config.ips.command_delay_s = 0.0
         backend.itc = FakeResource()
         backend.ips = FakeResource()
         backend._sample_target_K = None
@@ -37,6 +38,7 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
         backend._vti_rate_K_per_min = None
         backend._field_target_T = None
         backend._field_rate_T_per_min = None
+        backend._field_requested_rate_T_per_min = None
         backend._switch_heater_target = SwitchHeaterStatus.UNKNOWN
         backend._switch_heater_changed_at = None
         backend._mode = None
@@ -66,6 +68,25 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
             backend.ramp_field(1.0, 0.1)
 
         self.assertEqual(backend.ips.commands, [])
+
+    def test_ramp_field_caps_rate_inside_low_field_window(self) -> None:
+        backend = self.make_backend()
+        backend._ensure_switch_heater_ready_for_ramp = lambda: None
+        backend._read_ips_float = lambda command: 0.5 if command.endswith("SIG:FLD?") else None
+
+        backend.ramp_field(2.0, 0.3)
+
+        self.assertEqual(
+            backend.ips.commands,
+            [
+                "SET:DEV:GRPZ:PSU:ACTN:HOLD",
+                "SET:DEV:GRPZ:PSU:SIG:RFST:0.15",
+                "SET:DEV:GRPZ:PSU:SIG:FSET:2",
+                "SET:DEV:GRPZ:PSU:ACTN:RTOS",
+            ],
+        )
+        self.assertEqual(backend._field_requested_rate_T_per_min, 0.3)
+        self.assertEqual(backend._field_rate_T_per_min, 0.15)
 
     def test_ramp_to_zero_requires_ready_switch_heater(self) -> None:
         backend = self.make_backend()
@@ -98,6 +119,23 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
         ):
             backend._ensure_switch_heater_ready_for_ramp()
 
+    def test_maybe_adjust_field_rate_restores_requested_rate_outside_window(self) -> None:
+        backend = self.make_backend()
+        backend._field_requested_rate_T_per_min = 0.3
+        backend._field_rate_T_per_min = 0.15
+
+        backend._maybe_adjust_field_rate(
+            field_T=1.2,
+            field_rate_T_per_min=0.15,
+            field_ramping=True,
+        )
+
+        self.assertEqual(
+            backend.ips.commands,
+            ["SET:DEV:GRPZ:PSU:SIG:RFST:0.3"],
+        )
+        self.assertEqual(backend._field_rate_T_per_min, 0.3)
+
 
 class MercuryBackendHelperTests(unittest.TestCase):
     def test_within_tolerance_returns_unknown_when_values_missing(self) -> None:
@@ -121,6 +159,12 @@ class MercuryBackendHelperTests(unittest.TestCase):
             _pressure_mode_from_loop_state(None, None, 10.0),
             GasControlMode.FIXED_NEEDLE,
         )
+
+    def test_low_field_rate_cap(self) -> None:
+        self.assertEqual(_field_rate_with_low_field_cap(0.0, 0.3), 0.15)
+        self.assertEqual(_field_rate_with_low_field_cap(0.8, 0.1), 0.1)
+        self.assertEqual(_field_rate_with_low_field_cap(1.2, 0.3), 0.3)
+        self.assertEqual(_field_rate_with_low_field_cap(None, 0.3), 0.15)
 
 
 class MercuryResourceSocketTests(unittest.TestCase):

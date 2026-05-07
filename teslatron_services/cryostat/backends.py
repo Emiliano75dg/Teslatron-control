@@ -23,6 +23,9 @@ from .state import (
     TemperatureState,
 )
 
+LOW_FIELD_RATE_LIMIT_T_PER_MIN = 0.15
+LOW_FIELD_RATE_WINDOW_T = 1.0
+
 
 class CryostatBackend(ABC):
     @abstractmethod
@@ -90,6 +93,7 @@ class MockCryostatBackend(CryostatBackend):
         self._field_T = 0.0
         self._target_field_T = 0.0
         self._field_rate_T_per_min = 0.2
+        self._field_requested_rate_T_per_min = 0.2
         self._field_current_A = 0.0
         self._field_voltage_V = 0.0
         self._switch_heater_status = SwitchHeaterStatus.OFF
@@ -204,13 +208,21 @@ class MockCryostatBackend(CryostatBackend):
     def ramp_field(self, target_T: float, rate_T_per_min: float) -> None:
         self._aborted = False
         self._target_field_T = target_T
-        self._field_rate_T_per_min = abs(rate_T_per_min)
+        self._field_requested_rate_T_per_min = abs(rate_T_per_min)
+        self._field_rate_T_per_min = _field_rate_with_low_field_cap(
+            self._field_T,
+            self._field_requested_rate_T_per_min,
+        )
         self._mode = CryostatMode.RAMPING_B
 
     def ramp_to_zero(self, rate_T_per_min: float) -> None:
         self._aborted = False
         self._target_field_T = 0.0
-        self._field_rate_T_per_min = abs(rate_T_per_min)
+        self._field_requested_rate_T_per_min = abs(rate_T_per_min)
+        self._field_rate_T_per_min = _field_rate_with_low_field_cap(
+            self._field_T,
+            self._field_requested_rate_T_per_min,
+        )
         self._mode = CryostatMode.RAMPING_B
 
     def hold(self) -> None:
@@ -304,7 +316,16 @@ class MockCryostatBackend(CryostatBackend):
         self._field_T = _step_towards(
             self._field_T,
             self._target_field_T,
-            self._field_rate_T_per_min / 60.0 * dt,
+            _field_rate_with_low_field_cap(
+                self._field_T,
+                self._field_requested_rate_T_per_min,
+            )
+            / 60.0
+            * dt,
+        )
+        self._field_rate_T_per_min = _field_rate_with_low_field_cap(
+            self._field_T,
+            self._field_requested_rate_T_per_min,
         )
 
 
@@ -462,6 +483,7 @@ class MercuryCryostatBackend(CryostatBackend):
         self._vti_rate_K_per_min: float | None = None
         self._field_target_T: float | None = None
         self._field_rate_T_per_min: float | None = None
+        self._field_requested_rate_T_per_min: float | None = None
         self._switch_heater_target = SwitchHeaterStatus.UNKNOWN
         self._switch_heater_changed_at: float | None = None
         self._mode = CryostatMode.IDLE
@@ -554,6 +576,7 @@ class MercuryCryostatBackend(CryostatBackend):
             MagnetAction.TO_SET,
             MagnetAction.TO_ZERO,
         }
+        self._maybe_adjust_field_rate(field_T, field_rate, field_ramping)
         pressure_mode = _pressure_mode_from_loop_state(
             pressure_loop_enabled,
             pressure_target,
@@ -616,7 +639,7 @@ class MercuryCryostatBackend(CryostatBackend):
             field=FieldState(
                 B_T=field_T,
                 target_T=field_target_T,
-                rate_T_per_min=field_rate,
+                rate_T_per_min=_first_available(field_rate, self._field_rate_T_per_min),
                 output_current_A=field_current_A,
                 output_voltage_V=field_voltage_V,
                 magnet_temperature_K=magnet_temperature_K,
@@ -663,12 +686,18 @@ class MercuryCryostatBackend(CryostatBackend):
         self._aborted = False
         self._ensure_switch_heater_ready_for_ramp()
         self._field_target_T = target_T
-        self._field_rate_T_per_min = rate_T_per_min
+        self._field_requested_rate_T_per_min = rate_T_per_min
         group = self.config.ips.magnet_group
         delay = self.config.ips.command_delay_s
+        current_field_T = self._read_ips_float(f"READ:DEV:{group}:PSU:SIG:FLD?")
+        effective_rate_T_per_min = _field_rate_with_low_field_cap(
+            current_field_T,
+            rate_T_per_min,
+        )
+        self._field_rate_T_per_min = effective_rate_T_per_min
         self.ips.set(f"SET:DEV:{group}:PSU:ACTN:HOLD")
         time.sleep(delay)
-        self.ips.set(f"SET:DEV:{group}:PSU:SIG:RFST:{rate_T_per_min:.9g}")
+        self.ips.set(f"SET:DEV:{group}:PSU:SIG:RFST:{effective_rate_T_per_min:.9g}")
         time.sleep(delay)
         self.ips.set(f"SET:DEV:{group}:PSU:SIG:FSET:{target_T:.9g}")
         time.sleep(delay)
@@ -679,12 +708,18 @@ class MercuryCryostatBackend(CryostatBackend):
         self._aborted = False
         self._ensure_switch_heater_ready_for_ramp()
         self._field_target_T = 0.0
-        self._field_rate_T_per_min = rate_T_per_min
+        self._field_requested_rate_T_per_min = rate_T_per_min
         group = self.config.ips.magnet_group
         delay = self.config.ips.command_delay_s
+        current_field_T = self._read_ips_float(f"READ:DEV:{group}:PSU:SIG:FLD?")
+        effective_rate_T_per_min = _field_rate_with_low_field_cap(
+            current_field_T,
+            rate_T_per_min,
+        )
+        self._field_rate_T_per_min = effective_rate_T_per_min
         self.ips.set(f"SET:DEV:{group}:PSU:ACTN:HOLD")
         time.sleep(delay)
-        self.ips.set(f"SET:DEV:{group}:PSU:SIG:RFST:{rate_T_per_min:.9g}")
+        self.ips.set(f"SET:DEV:{group}:PSU:SIG:RFST:{effective_rate_T_per_min:.9g}")
         time.sleep(delay)
         self.ips.set(f"SET:DEV:{group}:PSU:ACTN:RTOZ")
 
@@ -771,6 +806,11 @@ class MercuryCryostatBackend(CryostatBackend):
                 "normal_command": "SWHT",
                 "forced_command_not_used": "SWHN",
                 "ramp_blocked_during_transition": True,
+            },
+            "field_rate_override": {
+                "window_min_T": -LOW_FIELD_RATE_WINDOW_T,
+                "window_max_T": LOW_FIELD_RATE_WINDOW_T,
+                "max_rate_T_per_min": LOW_FIELD_RATE_LIMIT_T_PER_MIN,
             },
         }
 
@@ -928,6 +968,35 @@ class MercuryCryostatBackend(CryostatBackend):
                 f"wait {switch_state.delay_s:.0f} s after changing the switch heater"
             )
 
+    def _maybe_adjust_field_rate(
+        self,
+        field_T: float | None,
+        field_rate_T_per_min: float | None,
+        field_ramping: bool,
+    ) -> None:
+        if self._field_requested_rate_T_per_min is None:
+            self._field_requested_rate_T_per_min = field_rate_T_per_min
+        if self._field_requested_rate_T_per_min is None:
+            return
+        desired_rate_T_per_min = _field_rate_with_low_field_cap(
+            field_T,
+            self._field_requested_rate_T_per_min,
+        )
+        if not field_ramping:
+            self._field_rate_T_per_min = desired_rate_T_per_min
+            return
+        current_rate_T_per_min = _first_available(
+            field_rate_T_per_min,
+            self._field_rate_T_per_min,
+        )
+        if current_rate_T_per_min is not None and abs(current_rate_T_per_min - desired_rate_T_per_min) <= 1e-9:
+            self._field_rate_T_per_min = current_rate_T_per_min
+            return
+        self.ips.set(
+            f"SET:DEV:{self.config.ips.magnet_group}:PSU:SIG:RFST:{desired_rate_T_per_min:.9g}"
+        )
+        self._field_rate_T_per_min = desired_rate_T_per_min
+
     def _temperature_loop_names(self, loop: str) -> set[str]:
         match loop:
             case "sample":
@@ -1021,6 +1090,15 @@ def _pressure_mode_from_loop_state(
     if needle_percent is not None:
         return GasControlMode.FIXED_NEEDLE
     return GasControlMode.UNKNOWN
+
+
+def _field_rate_with_low_field_cap(
+    field_T: float | None,
+    requested_rate_T_per_min: float,
+) -> float:
+    if abs(field_T or 0.0) <= LOW_FIELD_RATE_WINDOW_T:
+        return min(requested_rate_T_per_min, LOW_FIELD_RATE_LIMIT_T_PER_MIN)
+    return requested_rate_T_per_min
 
 
 def _temperature_heater_mode(
