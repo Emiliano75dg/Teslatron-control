@@ -384,9 +384,10 @@ class MercuryResource:
             if not chunk:
                 raise ConnectionResetError("Mercury socket closed before response")
             chunks.append(chunk)
-            if read_termination and chunk.endswith(read_termination):
+            response = b"".join(chunks)
+            if read_termination and response.endswith(read_termination):
                 break
-        return b"".join(chunks).decode(errors="replace")
+        return response.decode(errors="replace")
 
     def _socket(self) -> socket.socket:
         if self.socket_connection is None:
@@ -503,6 +504,9 @@ class MercuryCryostatBackend(CryostatBackend):
         pressure_target = self._read_itc_float(
             f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:PRST?"
         )
+        pressure_loop_enabled = self._try_read_itc_bool(
+            f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:ENAB?"
+        )
 
         field_T = self._read_ips_float(
             f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FLD?"
@@ -540,16 +544,21 @@ class MercuryCryostatBackend(CryostatBackend):
         vti_ramp_enabled = self._try_read_itc_bool(
             f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:RENA?"
         )
-        sample_target_reached = not _outside_tolerance(probe_K, probe_target_K, 0.05)
-        vti_target_reached = not _outside_tolerance(vti_K, vti_target_K, 0.05)
-        sample_ramping = bool(probe_ramp_enabled) and not sample_target_reached
-        vti_ramping = bool(vti_ramp_enabled) and not vti_target_reached
+        sample_target_reached = _within_tolerance(probe_K, probe_target_K, 0.05)
+        vti_target_reached = _within_tolerance(vti_K, vti_target_K, 0.05)
+        sample_ramping = bool(probe_ramp_enabled) and sample_target_reached is False
+        vti_ramping = bool(vti_ramp_enabled) and vti_target_reached is False
         temp_ramping = sample_ramping or vti_ramping
-        field_at_setpoint = not _outside_tolerance(field_T, field_target_T, 0.005)
-        field_ramping = not field_at_setpoint or magnet_action in {
+        field_at_setpoint = _within_tolerance(field_T, field_target_T, 0.005)
+        field_ramping = field_at_setpoint is False or magnet_action in {
             MagnetAction.TO_SET,
             MagnetAction.TO_ZERO,
         }
+        pressure_mode = _pressure_mode_from_loop_state(
+            pressure_loop_enabled,
+            pressure_target,
+            needle,
+        )
 
         if self._aborted:
             mode = CryostatMode.ABORTED
@@ -581,7 +590,7 @@ class MercuryCryostatBackend(CryostatBackend):
                     mode=TemperatureControlMode.RAMP
                     if probe_ramp_enabled
                     else TemperatureControlMode.FIXED_TARGET,
-                    stable=sample_target_reached,
+                    stable=sample_target_reached is True,
                     ramping=sample_ramping,
                 ),
                 vti=TemperatureLoopState(
@@ -600,7 +609,7 @@ class MercuryCryostatBackend(CryostatBackend):
                     mode=TemperatureControlMode.RAMP
                     if vti_ramp_enabled
                     else TemperatureControlMode.FIXED_TARGET,
-                    stable=vti_target_reached,
+                    stable=vti_target_reached is True,
                     ramping=vti_ramping,
                 ),
             ),
@@ -617,7 +626,7 @@ class MercuryCryostatBackend(CryostatBackend):
                 at_setpoint=field_at_setpoint,
                 at_zero=_inside_tolerance(field_T, 0.0, 0.005),
                 clamped=magnet_action == MagnetAction.CLAMP,
-                stable=field_at_setpoint,
+                stable=field_at_setpoint is True,
                 ramping=field_ramping,
             ),
             switch_heater=self._switch_heater_state(switch_heater_status),
@@ -625,9 +634,7 @@ class MercuryCryostatBackend(CryostatBackend):
                 mbar=pressure,
                 target_mbar=pressure_target,
                 needle_valve_percent=needle,
-                mode=GasControlMode.PRESSURE_CONTROL
-                if pressure_target is not None
-                else GasControlMode.UNKNOWN,
+                mode=pressure_mode,
             ),
             backend="mercury",
         )
@@ -654,6 +661,7 @@ class MercuryCryostatBackend(CryostatBackend):
 
     def ramp_field(self, target_T: float, rate_T_per_min: float) -> None:
         self._aborted = False
+        self._ensure_switch_heater_ready_for_ramp()
         self._field_target_T = target_T
         self._field_rate_T_per_min = rate_T_per_min
         group = self.config.ips.magnet_group
@@ -669,6 +677,7 @@ class MercuryCryostatBackend(CryostatBackend):
 
     def ramp_to_zero(self, rate_T_per_min: float) -> None:
         self._aborted = False
+        self._ensure_switch_heater_ready_for_ramp()
         self._field_target_T = 0.0
         self._field_rate_T_per_min = rate_T_per_min
         group = self.config.ips.magnet_group
@@ -707,6 +716,9 @@ class MercuryCryostatBackend(CryostatBackend):
         self._aborted = True
 
     def set_vti_needle(self, needle_valve_percent: float) -> None:
+        # Manual gas-flow control uses a fixed valve opening, so disable
+        # automatic pressure/flow control before writing FSET.
+        self.itc.set(f"SET:DEV:{self.config.itc.pressure}:PRES:LOOP:ENAB:OFF")
         self.itc.set(
             f"SET:DEV:{self.config.itc.pressure}:PRES:LOOP:FSET:{needle_valve_percent:.9g}"
         )
@@ -758,6 +770,7 @@ class MercuryCryostatBackend(CryostatBackend):
                 "off_delay_s": self.config.ips.switch_off_delay_s,
                 "normal_command": "SWHT",
                 "forced_command_not_used": "SWHN",
+                "ramp_blocked_during_transition": True,
             },
         }
 
@@ -780,6 +793,7 @@ class MercuryCryostatBackend(CryostatBackend):
             "itc_probe_ramp_enabled": ("itc", f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:RENA?"),
             "itc_vti_ramp_enabled": ("itc", f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:RENA?"),
             "itc_pressure": ("itc", f"READ:DEV:{self.config.itc.pressure}:PRES:SIG:PRES?"),
+            "itc_pressure_loop_enabled": ("itc", f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:ENAB?"),
             "itc_pressure_setpoint": ("itc", f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:PRST?"),
             "itc_needle_valve": ("itc", f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:FSET?"),
             "ips_field": ("ips", f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FLD?"),
@@ -793,13 +807,22 @@ class MercuryCryostatBackend(CryostatBackend):
             "ips_pt1_temperature": ("ips", f"READ:DEV:{self.config.ips.pt1_temperature}:TEMP:SIG:TEMP?"),
             "ips_pt2_temperature": ("ips", f"READ:DEV:{self.config.ips.pt2_temperature}:TEMP:SIG:TEMP?"),
         }
-        return {
+        readings = {
             name: {
                 "command": command,
                 "response": self._diagnostic_response(target, command),
             }
             for name, (target, command) in commands.items()
         }
+        switch_status = self._read_switch_heater_status()
+        readings["derived_switch_heater"] = {
+            "status": str(switch_status),
+            "target_status": str(self._switch_heater_state(switch_status).target_status),
+            "ready": self._switch_heater_state(switch_status).ready,
+            "delay_s": self._switch_heater_state(switch_status).delay_s,
+            "elapsed_s": self._switch_heater_state(switch_status).elapsed_s,
+        }
+        return readings
 
     def diagnostic_query(self, target: str, command: str) -> dict:
         resource = self._diagnostic_resource(target)
@@ -896,6 +919,15 @@ class MercuryCryostatBackend(CryostatBackend):
             return self.config.ips.switch_on_delay_s
         return self.config.ips.switch_off_delay_s
 
+    def _ensure_switch_heater_ready_for_ramp(self) -> None:
+        status = self._read_switch_heater_status()
+        switch_state = self._switch_heater_state(status)
+        if not switch_state.ready:
+            raise PermissionError(
+                "Magnet ramp blocked while the persistent switch is transitioning; "
+                f"wait {switch_state.delay_s:.0f} s after changing the switch heater"
+            )
+
     def _temperature_loop_names(self, loop: str) -> set[str]:
         match loop:
             case "sample":
@@ -959,10 +991,36 @@ def _outside_tolerance(value: float | None, target: float | None, tolerance: flo
     return abs(value - target) > tolerance
 
 
+def _within_tolerance(
+    value: float | None,
+    target: float | None,
+    tolerance: float,
+) -> bool | None:
+    if value is None or target is None:
+        return None
+    return abs(value - target) <= tolerance
+
+
 def _inside_tolerance(value: float | None, target: float, tolerance: float) -> bool | None:
     if value is None:
         return None
     return abs(value - target) <= tolerance
+
+
+def _pressure_mode_from_loop_state(
+    loop_enabled: bool | None,
+    target_mbar: float | None,
+    needle_percent: float | None,
+) -> GasControlMode:
+    if loop_enabled is True:
+        return GasControlMode.PRESSURE_CONTROL
+    if loop_enabled is False:
+        return GasControlMode.FIXED_NEEDLE
+    if target_mbar is not None:
+        return GasControlMode.PRESSURE_CONTROL
+    if needle_percent is not None:
+        return GasControlMode.FIXED_NEEDLE
+    return GasControlMode.UNKNOWN
 
 
 def _temperature_heater_mode(
