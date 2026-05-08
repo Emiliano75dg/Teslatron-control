@@ -50,6 +50,10 @@ class CryostatBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def clamp(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def hold(self) -> None:
         raise NotImplementedError
 
@@ -96,6 +100,7 @@ class MockCryostatBackend(CryostatBackend):
         self._field_requested_rate_T_per_min = 0.2
         self._field_current_A = 0.0
         self._field_voltage_V = 0.0
+        self._field_action = MagnetAction.HOLD
         self._switch_heater_status = SwitchHeaterStatus.OFF
         self._switch_heater_target = SwitchHeaterStatus.OFF
         self._switch_heater_changed_at: float | None = None
@@ -171,10 +176,12 @@ class MockCryostatBackend(CryostatBackend):
                 magnet_temperature_K=4.2,
                 pt1_temperature_K=3.82,
                 pt2_temperature_K=50.8,
-                action=MagnetAction.TO_SET if field_ramping else MagnetAction.HOLD,
+                action=self._field_action if self._field_action == MagnetAction.CLAMP else (
+                    MagnetAction.TO_SET if field_ramping else MagnetAction.HOLD
+                ),
                 at_setpoint=not field_ramping,
                 at_zero=field_at_zero,
-                clamped=False,
+                clamped=self._field_action == MagnetAction.CLAMP,
                 stable=not field_ramping,
                 ramping=field_ramping,
             ),
@@ -213,6 +220,7 @@ class MockCryostatBackend(CryostatBackend):
             self._field_T,
             self._field_requested_rate_T_per_min,
         )
+        self._field_action = MagnetAction.TO_SET
         self._mode = CryostatMode.RAMPING_B
 
     def ramp_to_zero(self, rate_T_per_min: float) -> None:
@@ -223,7 +231,16 @@ class MockCryostatBackend(CryostatBackend):
             self._field_T,
             self._field_requested_rate_T_per_min,
         )
+        self._field_action = MagnetAction.TO_ZERO
         self._mode = CryostatMode.RAMPING_B
+
+    def clamp(self) -> None:
+        self._advance()
+        if abs(self._field_current_A) >= 1.0:
+            raise PermissionError("Clamp blocked: magnet output current must be below 1 A")
+        self._target_field_T = self._field_T
+        self._field_action = MagnetAction.CLAMP
+        self._mode = CryostatMode.HOLDING
 
     def hold(self) -> None:
         self._advance()
@@ -232,6 +249,7 @@ class MockCryostatBackend(CryostatBackend):
         self._target_field_T = self._field_T
         self._sample_mode = TemperatureControlMode.FIXED_TARGET
         self._vti_mode = TemperatureControlMode.FIXED_TARGET
+        self._field_action = MagnetAction.HOLD
         self._mode = CryostatMode.HOLDING
 
     def abort(self) -> None:
@@ -722,6 +740,24 @@ class MercuryCryostatBackend(CryostatBackend):
         self.ips.set(f"SET:DEV:{group}:PSU:SIG:RFST:{effective_rate_T_per_min:.9g}")
         time.sleep(delay)
         self.ips.set(f"SET:DEV:{group}:PSU:ACTN:RTOZ")
+        self._mode = CryostatMode.RAMPING_B
+
+    def clamp(self) -> None:
+        self._aborted = False
+        group = self.config.ips.magnet_group
+        current_A = self._read_ips_float(f"READ:DEV:{group}:PSU:SIG:CURR?")
+        if current_A is None:
+            raise PermissionError("Clamp blocked: could not read magnet output current")
+        if abs(current_A) >= 1.0:
+            raise PermissionError(
+                f"Clamp blocked: magnet output current is {current_A:.4g} A; "
+                "manual allows clamp only below 1 A"
+            )
+        self.ips.set(f"SET:DEV:{group}:PSU:ACTN:CLMP")
+        self._field_target_T = None
+        self._field_rate_T_per_min = None
+        self._field_requested_rate_T_per_min = None
+        self._mode = CryostatMode.HOLDING
 
     def hold(self) -> None:
         # Optimization: Instead of reading the full state (~20 queries),

@@ -148,6 +148,10 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
             request.rate_T_per_min,
         )
 
+    @app.post("/commands/clamp")
+    async def clamp() -> dict:
+        return await service.clamp()
+
     @app.post("/commands/hold")
     async def hold() -> dict:
         return await service.hold()

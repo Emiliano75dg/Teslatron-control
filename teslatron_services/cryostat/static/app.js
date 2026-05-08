@@ -222,7 +222,14 @@ function bindCommands() {
     }), "Field ramp");
   });
 
+  el("toZeroButton").addEventListener("click", () => {
+    const rate = Number(new FormData(el("fieldForm")).get("rate_T_per_min"));
+    return runCommand(() => postJson("/commands/ramp-to-zero", {
+      rate_T_per_min: rate,
+    }), "To zero");
+  });
   el("holdButton").addEventListener("click", () => runCommand(() => postJson("/commands/hold"), "Hold"));
+  el("clampButton").addEventListener("click", () => runCommand(() => postJson("/commands/clamp"), "Clamp"));
   el("abortButton").addEventListener("click", () => runCommand(() => postJson("/commands/abort"), "Abort"));
   el("clearEvents").addEventListener("click", () => {
     el("events").replaceChildren();

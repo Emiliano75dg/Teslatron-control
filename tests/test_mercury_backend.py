@@ -16,12 +16,15 @@ from teslatron_services.cryostat.config import CryostatServiceConfig
 class FakeResource:
     def __init__(self):
         self.commands = []
+        self.responses = {}
 
     def set(self, command: str) -> None:
         self.commands.append(command)
 
     def query(self, command: str) -> str:
         self.commands.append(command)
+        if command in self.responses:
+            return self.responses[command]
         return "STAT:DEV:MOCK:SIG:SWHT:OFF\n"
 
 
@@ -98,6 +101,33 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
             backend.ramp_to_zero(0.1)
 
         self.assertEqual(backend.ips.commands, [])
+
+    def test_clamp_requires_output_current_below_one_amp(self) -> None:
+        backend = self.make_backend()
+        backend.ips.responses["READ:DEV:GRPZ:PSU:SIG:CURR?"] = (
+            "STAT:DEV:GRPZ:PSU:SIG:CURR:1.2000A\n"
+        )
+
+        with self.assertRaises(PermissionError):
+            backend.clamp()
+
+        self.assertEqual(backend.ips.commands, ["READ:DEV:GRPZ:PSU:SIG:CURR?"])
+
+    def test_clamp_sends_clmp_when_output_current_is_safe(self) -> None:
+        backend = self.make_backend()
+        backend.ips.responses["READ:DEV:GRPZ:PSU:SIG:CURR?"] = (
+            "STAT:DEV:GRPZ:PSU:SIG:CURR:0.2000A\n"
+        )
+
+        backend.clamp()
+
+        self.assertEqual(
+            backend.ips.commands,
+            [
+                "READ:DEV:GRPZ:PSU:SIG:CURR?",
+                "SET:DEV:GRPZ:PSU:ACTN:CLMP",
+            ],
+        )
 
     def test_switch_heater_ready_blocks_until_delay_elapses(self) -> None:
         backend = self.make_backend()
