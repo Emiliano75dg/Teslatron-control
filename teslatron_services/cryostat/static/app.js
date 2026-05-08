@@ -27,6 +27,17 @@ function formatBool(value) {
   return value ? "Yes" : "No";
 }
 
+function formatText(value) {
+  if (value === null || value === undefined || value === "") {
+    return "--";
+  }
+  return String(value);
+}
+
+function formatTermination(readTermination, writeTermination) {
+  return `${JSON.stringify(readTermination || "")} / ${JSON.stringify(writeTermination || "")}`;
+}
+
 function setText(id, value) {
   const node = el(id);
   if (node) {
@@ -56,6 +67,7 @@ async function loadConfig() {
   setText("subtitle", `${state.config.backend} backend`);
   setText("readOnlyNotice", state.config.read_only ? "Read only" : "Writable mock/session");
   setControlsEnabled(!state.config.read_only);
+  renderConfig(state.config);
 }
 
 function setControlsEnabled(enabled) {
@@ -170,6 +182,45 @@ function renderPressure(pressure) {
   setText("pressureTargetDetail", formatUnit(pressure.target_mbar, "mbar", 4));
   setText("needleValue", formatUnit(pressure.needle_valve_percent, "%", 1));
   el("needleBar").style.width = `${Math.max(0, Math.min(100, pressure.needle_valve_percent || 0))}%`;
+}
+
+function renderConfig(config) {
+  const itc = config.itc || {};
+  const ips = config.ips || {};
+  const safety = config.safety || {};
+
+  setText("configBackend", formatText(config.backend));
+  setText("configReadOnly", formatBool(config.read_only));
+  setText("configLogPath", formatText(config.log_path));
+  setText("configPollInterval", formatUnit(config.poll_interval_s, "s", 3));
+  setText("configLogInterval", formatUnit(config.log_interval_s, "s", 3));
+
+  setText("configItcAddress", formatText(itc.address));
+  setText("configItcTimeout", formatUnit(itc.timeout_ms, "ms", 0));
+  setText("configItcTermination", formatTermination(itc.read_termination, itc.write_termination));
+  setText("configItcProbeSignal", formatText(itc.probe_signal));
+  setText("configItcProbeLoop", formatText(itc.probe_loop));
+  setText("configItcVtiSignal", formatText(itc.vti_signal));
+  setText("configItcVtiLoop", formatText(itc.vti_loop));
+  setText("configItcPressure", formatText(itc.pressure));
+
+  setText("configIpsAddress", formatText(ips.address));
+  setText("configIpsTimeout", formatUnit(ips.timeout_ms, "ms", 0));
+  setText("configIpsTermination", formatTermination(ips.read_termination, ips.write_termination));
+  setText("configIpsCommandDelay", formatUnit(ips.command_delay_s, "s", 3));
+  setText("configIpsMagnetGroup", formatText(ips.magnet_group));
+  setText("configIpsMagnetTemperature", formatText(ips.magnet_temperature));
+  setText("configIpsPt1Temperature", formatText(ips.pt1_temperature));
+  setText("configIpsPt2Temperature", formatText(ips.pt2_temperature));
+  setText("configIpsSwitchOnDelay", formatUnit(ips.switch_on_delay_s, "s", 1));
+  setText("configIpsSwitchOffDelay", formatUnit(ips.switch_off_delay_s, "s", 1));
+
+  setText("configMinTemperature", formatUnit(safety.min_temperature_K, "K", 3));
+  setText("configMaxTemperature", formatUnit(safety.max_temperature_K, "K", 3));
+  setText("configMaxTemperatureRate", formatUnit(safety.max_temperature_rate_K_per_min, "K/min", 3));
+  setText("configMaxField", formatUnit(safety.max_field_T, "T", 4));
+  setText("configMaxFieldRate", formatUnit(safety.max_field_rate_T_per_min, "T/min", 4));
+  setText("configJson", JSON.stringify(config, null, 2));
 }
 
 function connectWebSocket() {

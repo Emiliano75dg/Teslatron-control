@@ -151,6 +151,7 @@ h3 {
 .overview-panel,
 .plot-panel,
 .command-panel,
+.config-panel,
 .event-panel {
   grid-column: span 12;
 }
@@ -508,6 +509,36 @@ button.ghost {
   color: #344452;
 }
 
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.config-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.config-card.wide {
+  grid-column: span 2;
+}
+
+.config-json {
+  max-height: 260px;
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #2f3b45;
+  border-radius: 6px;
+  background: #11171d;
+  color: #e9eef3;
+  font: 12px/1.5 ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
 @media (max-width: 900px) {
   .topbar {
     align-items: flex-start;
@@ -517,6 +548,7 @@ button.ghost {
   .panel,
   .overview-panel,
   .command-panel,
+  .config-panel,
   .event-panel {
     grid-column: span 12;
   }
@@ -525,7 +557,12 @@ button.ghost {
   .loop-grid,
   .field-grid,
   .plot-grid,
+  .config-grid,
   .command-form {
     grid-template-columns: 1fr;
+  }
+
+  .config-card.wide {
+    grid-column: span 1;
   }
 }

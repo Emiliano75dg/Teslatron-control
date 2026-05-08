@@ -26,6 +26,7 @@
       <button class="tab-button" type="button" data-tab="ips">IPS</button>
       <button class="tab-button" type="button" data-tab="plots">Plots</button>
       <button class="tab-button" type="button" data-tab="commands">Commands</button>
+      <button class="tab-button" type="button" data-tab="config">Config</button>
     </nav>
 
     <main class="layout">
@@ -270,6 +271,72 @@
           <button id="abortButton" class="danger" type="button">Abort</button>
         </div>
         <p id="commandMessage" class="message"></p>
+      </section>
+
+      <section class="panel config-panel view-section hidden" data-view="config">
+        <div class="panel-heading">
+          <h2>Config</h2>
+          <span class="muted">Read-only service setup</span>
+        </div>
+        <div class="config-grid">
+          <article class="config-card">
+            <h3>Connection</h3>
+            <dl class="dense-list">
+              <dt>Backend</dt><dd id="configBackend">--</dd>
+              <dt>Read only</dt><dd id="configReadOnly">--</dd>
+              <dt>Log path</dt><dd id="configLogPath">--</dd>
+              <dt>ITC address</dt><dd id="configItcAddress">--</dd>
+              <dt>ITC timeout</dt><dd id="configItcTimeout">--</dd>
+              <dt>ITC term.</dt><dd id="configItcTermination">--</dd>
+              <dt>IPS address</dt><dd id="configIpsAddress">--</dd>
+              <dt>IPS timeout</dt><dd id="configIpsTimeout">--</dd>
+              <dt>IPS term.</dt><dd id="configIpsTermination">--</dd>
+            </dl>
+          </article>
+          <article class="config-card">
+            <h3>Acquisition</h3>
+            <dl class="dense-list">
+              <dt>Poll interval</dt><dd id="configPollInterval">--</dd>
+              <dt>Log interval</dt><dd id="configLogInterval">--</dd>
+              <dt>IPS command gap</dt><dd id="configIpsCommandDelay">--</dd>
+            </dl>
+          </article>
+          <article class="config-card">
+            <h3>ITC Modules</h3>
+            <dl class="dense-list">
+              <dt>Sample signal</dt><dd id="configItcProbeSignal">--</dd>
+              <dt>Sample loop</dt><dd id="configItcProbeLoop">--</dd>
+              <dt>VTI signal</dt><dd id="configItcVtiSignal">--</dd>
+              <dt>VTI loop</dt><dd id="configItcVtiLoop">--</dd>
+              <dt>Pressure</dt><dd id="configItcPressure">--</dd>
+            </dl>
+          </article>
+          <article class="config-card">
+            <h3>IPS Modules</h3>
+            <dl class="dense-list">
+              <dt>Magnet group</dt><dd id="configIpsMagnetGroup">--</dd>
+              <dt>Magnet temp</dt><dd id="configIpsMagnetTemperature">--</dd>
+              <dt>PT1 temp</dt><dd id="configIpsPt1Temperature">--</dd>
+              <dt>PT2 temp</dt><dd id="configIpsPt2Temperature">--</dd>
+              <dt>Switch on delay</dt><dd id="configIpsSwitchOnDelay">--</dd>
+              <dt>Switch off delay</dt><dd id="configIpsSwitchOffDelay">--</dd>
+            </dl>
+          </article>
+          <article class="config-card">
+            <h3>Safety Limits</h3>
+            <dl class="dense-list">
+              <dt>Min temp</dt><dd id="configMinTemperature">--</dd>
+              <dt>Max temp</dt><dd id="configMaxTemperature">--</dd>
+              <dt>Max T rate</dt><dd id="configMaxTemperatureRate">--</dd>
+              <dt>Max field</dt><dd id="configMaxField">--</dd>
+              <dt>Max B rate</dt><dd id="configMaxFieldRate">--</dd>
+            </dl>
+          </article>
+          <article class="config-card wide">
+            <h3>Raw Snapshot</h3>
+            <pre id="configJson" class="config-json">{}</pre>
+          </article>
+        </div>
       </section>
 
       <section class="panel event-panel view-section" data-view="overview">
