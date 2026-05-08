@@ -42,6 +42,14 @@ class CryostatBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def set_temperature_target(
+        self,
+        target_K: float,
+        loop: str = "both",
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def ramp_field(self, target_T: float, rate_T_per_min: float) -> None:
         raise NotImplementedError
 
@@ -234,6 +242,26 @@ class MockCryostatBackend(CryostatBackend):
             self._vti_rate_K_per_min = abs(rate_K_per_min)
             self._vti_mode = TemperatureControlMode.RAMP
         self._mode = CryostatMode.RAMPING_T
+
+    def set_temperature_target(
+        self,
+        target_K: float,
+        loop: str = "both",
+    ) -> None:
+        self._aborted = False
+        targets = _temperature_targets_for_loop(
+            loop,
+            target_K,
+            sample_loop=self.config.itc.probe_loop,
+            vti_loop=self.config.itc.vti_loop,
+        )
+        if loop in {"sample", "both"}:
+            self._sample_target_K = targets[self.config.itc.probe_loop]
+            self._sample_mode = TemperatureControlMode.FIXED_TARGET
+        if loop in {"vti", "both"}:
+            self._vti_target_K = targets[self.config.itc.vti_loop]
+            self._vti_mode = TemperatureControlMode.FIXED_TARGET
+        self._mode = CryostatMode.HOLDING
 
     def ramp_field(self, target_T: float, rate_T_per_min: float) -> None:
         self._aborted = False
@@ -757,6 +785,28 @@ class MercuryCryostatBackend(CryostatBackend):
             self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:TSET:{loop_target_K:.9g}")
             self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:ENAB:ON")
         self._mode = CryostatMode.RAMPING_T
+
+    def set_temperature_target(
+        self,
+        target_K: float,
+        loop: str = "both",
+    ) -> None:
+        self._aborted = False
+        targets = _temperature_targets_for_loop(
+            loop,
+            target_K,
+            sample_loop=self.config.itc.probe_loop,
+            vti_loop=self.config.itc.vti_loop,
+        )
+        if loop in {"sample", "both"}:
+            self._sample_target_K = targets[self.config.itc.probe_loop]
+        if loop in {"vti", "both"}:
+            self._vti_target_K = targets[self.config.itc.vti_loop]
+        for mercury_loop, loop_target_K in targets.items():
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:RENA:OFF")
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:TSET:{loop_target_K:.9g}")
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:ENAB:ON")
+        self._mode = CryostatMode.HOLDING
 
     def ramp_field(self, target_T: float, rate_T_per_min: float) -> None:
         self._aborted = False

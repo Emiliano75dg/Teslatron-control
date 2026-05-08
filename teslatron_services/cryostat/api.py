@@ -18,6 +18,10 @@ class RampTemperatureRequest(BaseModel):
     rate_K_per_min: Annotated[float, Field(gt=0)]
 
 
+class TargetTemperatureRequest(BaseModel):
+    target_K: Annotated[float, Field(ge=0)]
+
+
 class RampFieldRequest(BaseModel):
     target_T: float
     rate_T_per_min: Annotated[float, Field(gt=0)]
@@ -143,6 +147,16 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
         return await service.ramp_temperature(
             request.target_K,
             request.rate_K_per_min,
+            loop=loop,
+        )
+
+    @app.post("/commands/temperature/{loop}/target")
+    async def set_temperature_target_loop(
+        loop: str,
+        request: TargetTemperatureRequest,
+    ) -> dict:
+        return await service.set_temperature_target(
+            request.target_K,
             loop=loop,
         )
 

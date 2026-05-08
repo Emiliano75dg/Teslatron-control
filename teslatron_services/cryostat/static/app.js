@@ -272,6 +272,15 @@ function bindCommands() {
     }), `Temperature ramp ${loop}`);
   });
 
+  el("targetTemperatureForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const loop = form.get("loop");
+    await runCommand(() => postJson(`/commands/temperature/${loop}/target`, {
+      target_K: Number(form.get("target_K")),
+    }), `Temperature target ${loop}`);
+  });
+
   el("fixedHeaterForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);

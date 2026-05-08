@@ -196,13 +196,26 @@
               <option value="both">Both, VTI 90%</option>
             </select>
           </label>
-          <label>Sample target K
+          <label>Target K
             <input name="target_K" type="number" step="0.001" value="4.2">
           </label>
           <label>Rate K/min
             <input name="rate_K_per_min" type="number" step="0.001" value="1">
           </label>
           <button type="submit">Ramp T</button>
+        </form>
+        <form id="targetTemperatureForm" class="command-form">
+          <label>Loop
+            <select name="loop">
+              <option value="sample">Sample</option>
+              <option value="vti">VTI</option>
+              <option value="both">Both, VTI 90%</option>
+            </select>
+          </label>
+          <label>Sample target K
+            <input name="target_K" type="number" step="0.001" value="4.2">
+          </label>
+          <button type="submit">Set Target</button>
         </form>
         <form id="fixedHeaterForm" class="command-form">
           <label>Loop

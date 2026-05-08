@@ -64,6 +64,20 @@ class CryostatService:
         await self.poll_once()
         return self._state.to_dict()
 
+    async def set_temperature_target(
+        self,
+        target_K: float,
+        loop: str = "both",
+    ) -> dict[str, Any]:
+        self._ensure_writable()
+        self._validate_temperature_loop(loop)
+        self._validate_temperature_target(target_K)
+        if loop == "both":
+            self._validate_temperature_target(target_K * 0.9)
+        self.backend.set_temperature_target(target_K, loop=loop)
+        await self.poll_once()
+        return self._state.to_dict()
+
     async def ramp_field(self, target_T: float, rate_T_per_min: float) -> dict[str, Any]:
         self._ensure_writable()
         self._validate_field(target_T, rate_T_per_min)
@@ -213,11 +227,15 @@ class CryostatService:
             writer.writerow(row)
 
     def _validate_temperature(self, target_K: float, rate_K_per_min: float) -> None:
+        self._validate_temperature_target(target_K)
+        safety = self.config.safety
+        if rate_K_per_min <= 0 or rate_K_per_min > safety.max_temperature_rate_K_per_min:
+            raise ValueError(f"Temperature rate out of range: {rate_K_per_min} K/min")
+
+    def _validate_temperature_target(self, target_K: float) -> None:
         safety = self.config.safety
         if not safety.min_temperature_K <= target_K <= safety.max_temperature_K:
             raise ValueError(f"Temperature target out of range: {target_K} K")
-        if rate_K_per_min <= 0 or rate_K_per_min > safety.max_temperature_rate_K_per_min:
-            raise ValueError(f"Temperature rate out of range: {rate_K_per_min} K/min")
 
     def _validate_temperature_loop(self, loop: str) -> None:
         if loop not in {"sample", "vti", "both"}:

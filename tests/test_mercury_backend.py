@@ -143,6 +143,21 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
             ],
         )
 
+    def test_fixed_target_disables_ramp_and_enables_temperature_loop(self) -> None:
+        backend = self.make_backend()
+
+        backend.set_temperature_target(42.0, loop="sample")
+
+        self.assertEqual(
+            backend.itc.commands,
+            [
+                "SET:DEV:DB8.T1:TEMP:LOOP:RENA:OFF",
+                "SET:DEV:DB8.T1:TEMP:LOOP:TSET:42",
+                "SET:DEV:DB8.T1:TEMP:LOOP:ENAB:ON",
+            ],
+        )
+        self.assertEqual(backend._sample_target_K, 42.0)
+
     def test_manual_pid_writes_terms_and_enables_loop(self) -> None:
         backend = self.make_backend()
 
