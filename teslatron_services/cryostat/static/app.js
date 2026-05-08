@@ -391,14 +391,14 @@ function renderCharts() {
     { key: "magnet_K", label: "Magnet", color: "#52d273" },
     { key: "pt1_K", label: "PT1", color: "#24c6dc" },
     { key: "pt2_K", label: "PT2", color: "#ffd43b" },
-  ], "K");
+  ], "Temperature (K)");
   drawTimeSeries(el("magneticsChart"), [
     { key: "field_T", label: "Field", color: "#00ff4c", axis: "left" },
     { key: "current_A", label: "Current", color: "#4cc9f0", axis: "left" },
     { key: "voltage_V", label: "Voltage", color: "#f72585", axis: "left" },
     { key: "pressure_mbar", label: "Pressure", color: "#ffb000", axis: "right" },
     { key: "needle_percent", label: "Needle", color: "#c15cff", axis: "right" },
-  ], "T / A / V", "mbar / %");
+  ], "B (T), I (A), V (V)", "Pressure (mbar), Needle (%)");
 }
 
 function drawTimeSeries(canvas, series, leftUnit, rightUnit = null) {
@@ -409,7 +409,7 @@ function drawTimeSeries(canvas, series, leftUnit, rightUnit = null) {
   const rect = canvas.getBoundingClientRect();
   const scale = window.devicePixelRatio || 1;
   const width = Math.max(420, Math.floor(rect.width * scale));
-  const height = Math.max(240, Math.floor(rect.height * scale));
+  const height = Math.max(312, Math.floor(rect.height * scale));
   if (canvas.width !== width || canvas.height !== height) {
     canvas.width = width;
     canvas.height = height;
@@ -420,10 +420,10 @@ function drawTimeSeries(canvas, series, leftUnit, rightUnit = null) {
   ctx.fillRect(0, 0, width, height);
 
   const padding = {
-    left: 58 * scale,
-    right: (rightUnit ? 58 : 18) * scale,
-    top: 18 * scale,
-    bottom: 34 * scale,
+    left: 68 * scale,
+    right: (rightUnit ? 76 : 22) * scale,
+    top: 20 * scale,
+    bottom: 56 * scale,
   };
   const plot = {
     x: padding.left,
@@ -558,8 +558,19 @@ function drawTimeLabels(ctx, plot, scale, minTime, maxTime) {
     { x: plot.x + plot.w, value: maxTime },
   ];
   for (const label of labels) {
-    ctx.fillText(new Date(label.value * 1000).toLocaleTimeString(), label.x, plot.y + plot.h + 10 * scale);
+    ctx.fillText(formatClockTime(label.value), label.x, plot.y + plot.h + 10 * scale);
   }
+  ctx.font = `${12 * scale}px system-ui, sans-serif`;
+  ctx.fillStyle = "#d7e0e8";
+  ctx.fillText("Time", plot.x + plot.w / 2, plot.y + plot.h + 32 * scale);
+}
+
+function formatClockTime(timestamp) {
+  return new Date(timestamp * 1000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 function drawSeries(ctx, plot, minTime, maxTime, range, item) {
