@@ -129,6 +129,49 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
             ],
         )
 
+    def test_fixed_heater_disables_pid_loop_before_setting_heater_output(self) -> None:
+        backend = self.make_backend()
+
+        backend.set_temperature_fixed_heater("sample", 12.5)
+
+        self.assertEqual(
+            backend.itc.commands,
+            [
+                "SET:DEV:DB8.T1:TEMP:LOOP:RENA:OFF",
+                "SET:DEV:DB8.T1:TEMP:LOOP:ENAB:OFF",
+                "SET:DEV:DB8.T1:TEMP:LOOP:HSET:12.5",
+            ],
+        )
+
+    def test_manual_pid_writes_terms_and_enables_loop(self) -> None:
+        backend = self.make_backend()
+
+        backend.set_temperature_pid("vti", p=25.0, i=1.0, d=0.0, auto=False)
+
+        self.assertEqual(
+            backend.itc.commands,
+            [
+                "SET:DEV:MB1.T1:TEMP:LOOP:PIDT:OFF",
+                "SET:DEV:MB1.T1:TEMP:LOOP:P:25",
+                "SET:DEV:MB1.T1:TEMP:LOOP:I:1",
+                "SET:DEV:MB1.T1:TEMP:LOOP:D:0",
+                "SET:DEV:MB1.T1:TEMP:LOOP:ENAB:ON",
+            ],
+        )
+
+    def test_auto_pid_uses_pid_table_without_overwriting_terms(self) -> None:
+        backend = self.make_backend()
+
+        backend.set_temperature_pid("sample", p=10.0, i=1.0, d=0.0, auto=True)
+
+        self.assertEqual(
+            backend.itc.commands,
+            [
+                "SET:DEV:DB8.T1:TEMP:LOOP:PIDT:ON",
+                "SET:DEV:DB8.T1:TEMP:LOOP:ENAB:ON",
+            ],
+        )
+
     def test_switch_heater_ready_blocks_until_delay_elapses(self) -> None:
         backend = self.make_backend()
         backend._switch_heater_target = SwitchHeaterStatus.ON

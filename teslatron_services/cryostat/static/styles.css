@@ -436,6 +436,19 @@ select {
   background: white;
 }
 
+.checkbox-label {
+  align-self: center;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.checkbox-label input {
+  width: auto;
+  min-height: auto;
+}
+
 button {
   cursor: pointer;
   background: var(--accent);

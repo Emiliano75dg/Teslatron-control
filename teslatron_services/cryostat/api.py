@@ -35,6 +35,17 @@ class PressureRequest(BaseModel):
     pressure_mbar: Annotated[float, Field(ge=0)]
 
 
+class FixedHeaterRequest(BaseModel):
+    heater_percent: Annotated[float, Field(ge=0, le=100)]
+
+
+class PIDRequest(BaseModel):
+    p: Annotated[float, Field(ge=0)]
+    i: Annotated[float, Field(ge=0)]
+    d: Annotated[float, Field(ge=0)]
+    auto: bool = False
+
+
 class DiagnosticQueryRequest(BaseModel):
     target: str
     command: str
@@ -133,6 +144,23 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
             request.target_K,
             request.rate_K_per_min,
             loop=loop,
+        )
+
+    @app.post("/commands/temperature/{loop}/fixed-heater")
+    async def fixed_heater_loop(loop: str, request: FixedHeaterRequest) -> dict:
+        return await service.set_temperature_fixed_heater(
+            loop,
+            request.heater_percent,
+        )
+
+    @app.post("/commands/temperature/{loop}/pid")
+    async def set_pid_loop(loop: str, request: PIDRequest) -> dict:
+        return await service.set_temperature_pid(
+            loop,
+            request.p,
+            request.i,
+            request.d,
+            auto=request.auto,
         )
 
     @app.post("/commands/ramp-field")

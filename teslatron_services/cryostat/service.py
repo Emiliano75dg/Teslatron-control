@@ -108,6 +108,33 @@ class CryostatService:
         await self.poll_once()
         return self._state.to_dict()
 
+    async def set_temperature_fixed_heater(
+        self,
+        loop: str,
+        heater_percent: float,
+    ) -> dict[str, Any]:
+        self._ensure_writable()
+        self._validate_temperature_loop(loop)
+        self._validate_heater_percent(heater_percent)
+        self.backend.set_temperature_fixed_heater(loop, heater_percent)
+        await self.poll_once()
+        return self._state.to_dict()
+
+    async def set_temperature_pid(
+        self,
+        loop: str,
+        p: float,
+        i: float,
+        d: float,
+        auto: bool = False,
+    ) -> dict[str, Any]:
+        self._ensure_writable()
+        self._validate_temperature_loop(loop)
+        self._validate_pid(p, i, d)
+        self.backend.set_temperature_pid(loop, p, i, d, auto=auto)
+        await self.poll_once()
+        return self._state.to_dict()
+
     async def set_switch_heater(self, enabled: bool) -> dict[str, Any]:
         self._ensure_writable()
         self.backend.set_switch_heater(enabled)
@@ -204,6 +231,14 @@ class CryostatService:
     def _validate_needle_valve(self, needle_valve_percent: float) -> None:
         if not 0.0 <= needle_valve_percent <= 100.0:
             raise ValueError("Needle valve opening must be between 0 and 100 percent")
+
+    def _validate_heater_percent(self, heater_percent: float) -> None:
+        if not 0.0 <= heater_percent <= 100.0:
+            raise ValueError("Heater output must be between 0 and 100 percent")
+
+    def _validate_pid(self, p: float, i: float, d: float) -> None:
+        if p < 0 or i < 0 or d < 0:
+            raise ValueError("PID values must be non-negative")
 
     def _validate_pressure(self, pressure_mbar: float) -> None:
         if pressure_mbar < 0:

@@ -75,6 +75,7 @@
               <dt>Loop</dt><dd id="sampleLoopEnabled">--</dd>
               <dt>Ramp</dt><dd id="sampleRampEnabled">--</dd>
               <dt>Target reached</dt><dd id="sampleTargetReached">--</dd>
+              <dt>PID</dt><dd id="samplePid">--</dd>
               <dt>Mode</dt><dd id="sampleMode">--</dd>
               <dt>State</dt><dd id="sampleState">--</dd>
             </dl>
@@ -90,6 +91,7 @@
               <dt>Loop</dt><dd id="vtiLoopEnabled">--</dd>
               <dt>Ramp</dt><dd id="vtiRampEnabled">--</dd>
               <dt>Target reached</dt><dd id="vtiTargetReached">--</dd>
+              <dt>PID</dt><dd id="vtiPid">--</dd>
               <dt>Mode</dt><dd id="vtiMode">--</dd>
               <dt>State</dt><dd id="vtiState">--</dd>
             </dl>
@@ -200,6 +202,57 @@
             <input name="rate_K_per_min" type="number" step="0.001" value="1">
           </label>
           <button type="submit">Ramp T</button>
+        </form>
+        <form id="fixedHeaterForm" class="command-form">
+          <label>Loop
+            <select name="loop">
+              <option value="sample">Sample</option>
+              <option value="vti">VTI</option>
+              <option value="both">Both</option>
+            </select>
+          </label>
+          <label>Heater %
+            <input name="heater_percent" type="number" step="0.1" min="0" max="100" value="0">
+          </label>
+          <button type="submit">Fixed Power</button>
+        </form>
+        <form id="pidForm" class="command-form pid-form">
+          <label>Loop
+            <select name="loop">
+              <option value="sample">Sample</option>
+              <option value="vti">VTI</option>
+              <option value="both">Both</option>
+            </select>
+          </label>
+          <label>P
+            <input name="p" type="number" step="0.001" min="0" value="10">
+          </label>
+          <label>I
+            <input name="i" type="number" step="0.001" min="0" value="1">
+          </label>
+          <label>D
+            <input name="d" type="number" step="0.001" min="0" value="0">
+          </label>
+          <label class="checkbox-label">
+            <input name="auto" type="checkbox">
+            Auto PID table
+          </label>
+          <button type="submit">Set PID</button>
+        </form>
+        <form id="gasForm" class="command-form">
+          <label>Mode
+            <select name="mode">
+              <option value="pressure">Pressure</option>
+              <option value="needle">Needle</option>
+            </select>
+          </label>
+          <label>Pressure mbar
+            <input name="pressure_mbar" type="number" step="0.001" min="0" value="10">
+          </label>
+          <label>Needle %
+            <input name="needle_valve_percent" type="number" step="0.1" min="0" max="100" value="0">
+          </label>
+          <button type="submit">Set VTI Gas</button>
         </form>
         <form id="fieldForm" class="command-form">
           <label>Target T

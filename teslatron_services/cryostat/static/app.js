@@ -135,8 +135,16 @@ function renderLoop(prefix, loop) {
   setText(`${prefix}LoopEnabled`, formatBool(loop.loop_enabled));
   setText(`${prefix}RampEnabled`, formatBool(loop.ramp_enabled));
   setText(`${prefix}TargetReached`, formatBool(loop.target_reached));
+  setText(`${prefix}Pid`, formatPid(loop.pid));
   setText(`${prefix}Mode`, loop.mode);
   setText(`${prefix}State`, loop.ramping ? "Ramping" : loop.stable ? "Stable" : "Tracking");
+}
+
+function formatPid(pid) {
+  if (!pid) {
+    return "--";
+  }
+  return `${pid.mode || "UNKNOWN"} P ${formatNumber(pid.p, 3)} I ${formatNumber(pid.i, 3)} D ${formatNumber(pid.d, 3)}`;
 }
 
 function renderField(field, switchHeater) {
@@ -211,6 +219,38 @@ function bindCommands() {
       target_K: Number(form.get("target_K")),
       rate_K_per_min: Number(form.get("rate_K_per_min")),
     }), `Temperature ramp ${loop}`);
+  });
+
+  el("fixedHeaterForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const loop = form.get("loop");
+    await runCommand(() => postJson(`/commands/temperature/${loop}/fixed-heater`, {
+      heater_percent: Number(form.get("heater_percent")),
+    }), `Fixed heater ${loop}`);
+  });
+
+  el("pidForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const loop = form.get("loop");
+    await runCommand(() => postJson(`/commands/temperature/${loop}/pid`, {
+      p: Number(form.get("p")),
+      i: Number(form.get("i")),
+      d: Number(form.get("d")),
+      auto: form.get("auto") === "on",
+    }), `PID ${loop}`);
+  });
+
+  el("gasForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const mode = form.get("mode");
+    const endpoint = mode === "needle" ? "/commands/vti/gas/set-needle" : "/commands/vti/gas/set-pressure";
+    const payload = mode === "needle"
+      ? { needle_valve_percent: Number(form.get("needle_valve_percent")) }
+      : { pressure_mbar: Number(form.get("pressure_mbar")) };
+    await runCommand(() => postJson(endpoint, payload), `VTI gas ${mode}`);
   });
 
   el("fieldForm").addEventListener("submit", async (event) => {
