@@ -3,10 +3,26 @@ const state = {
   lastMode: null,
   lastError: null,
   history: [],
+  customPlotMinutes: 120,
 };
 
 const el = (id) => document.getElementById(id);
-const HISTORY_WINDOW_S = 10 * 60;
+const RECENT_PLOT_WINDOW_S = 30 * 60;
+const MAX_HISTORY_WINDOW_S = 24 * 60 * 60;
+const TEMPERATURE_SERIES = [
+  { key: "sample_K", label: "Sample", color: "#f44336" },
+  { key: "vti_K", label: "VTI", color: "#ffffff" },
+  { key: "magnet_K", label: "Magnet", color: "#52d273" },
+  { key: "pt1_K", label: "PT1", color: "#24c6dc" },
+  { key: "pt2_K", label: "PT2", color: "#ffd43b" },
+];
+const MAGNETICS_SERIES = [
+  { key: "field_T", label: "Field", color: "#00ff4c", axis: "left" },
+  { key: "current_A", label: "Current", color: "#4cc9f0", axis: "left" },
+  { key: "voltage_V", label: "Voltage", color: "#f72585", axis: "left" },
+  { key: "pressure_mbar", label: "Pressure", color: "#ffb000", axis: "right" },
+  { key: "needle_percent", label: "Needle", color: "#c15cff", axis: "right" },
+];
 
 function formatNumber(value, digits = 3) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) {
@@ -132,10 +148,9 @@ function recordHistory(data) {
     pressure_mbar: data.pressure.mbar,
     needle_percent: data.pressure.needle_valve_percent,
   });
-  const cutoff = data.timestamp - HISTORY_WINDOW_S;
+  const cutoff = data.timestamp - MAX_HISTORY_WINDOW_S;
   state.history = state.history.filter((point) => point.timestamp >= cutoff);
-  const minutes = Math.round(HISTORY_WINDOW_S / 60);
-  setText("plotWindow", `Last ${minutes} min, ${state.history.length} points`);
+  setText("plotWindow", `${state.history.length} stored points`);
 }
 
 function renderLoop(prefix, loop) {
@@ -339,6 +354,11 @@ function bindCommands() {
     renderCharts();
     addEvent("Plots cleared");
   });
+  el("customPlotMinutes").addEventListener("change", (event) => {
+    state.customPlotMinutes = clampCustomPlotMinutes(event.currentTarget.value);
+    event.currentTarget.value = state.customPlotMinutes;
+    renderCharts();
+  });
 }
 
 function bindTabs() {
@@ -385,23 +405,55 @@ loadConfig()
   });
 
 function renderCharts() {
-  drawTimeSeries(el("temperatureChart"), [
-    { key: "sample_K", label: "Sample", color: "#f44336" },
-    { key: "vti_K", label: "VTI", color: "#ffffff" },
-    { key: "magnet_K", label: "Magnet", color: "#52d273" },
-    { key: "pt1_K", label: "PT1", color: "#24c6dc" },
-    { key: "pt2_K", label: "PT2", color: "#ffd43b" },
-  ], "Temperature (K)");
-  drawTimeSeries(el("magneticsChart"), [
-    { key: "field_T", label: "Field", color: "#00ff4c", axis: "left" },
-    { key: "current_A", label: "Current", color: "#4cc9f0", axis: "left" },
-    { key: "voltage_V", label: "Voltage", color: "#f72585", axis: "left" },
-    { key: "pressure_mbar", label: "Pressure", color: "#ffb000", axis: "right" },
-    { key: "needle_percent", label: "Needle", color: "#c15cff", axis: "right" },
-  ], "B (T), I (A), V (V)", "Pressure (mbar), Needle (%)");
+  const recentPoints = historyForWindow(RECENT_PLOT_WINDOW_S);
+  const customWindowS = state.customPlotMinutes * 60;
+  const customPoints = historyForWindow(customWindowS);
+
+  setText("recentPlotWindow", plotWindowLabel(30, recentPoints.length));
+  setText("customPlotWindow", plotWindowLabel(state.customPlotMinutes, customPoints.length));
+
+  drawPlotPair("recent", recentPoints);
+  drawPlotPair("custom", customPoints);
 }
 
-function drawTimeSeries(canvas, series, leftUnit, rightUnit = null) {
+function drawPlotPair(prefix, points) {
+  drawTimeSeries(
+    el(`${prefix}TemperatureChart`),
+    points,
+    TEMPERATURE_SERIES,
+    "Temperature (K)",
+  );
+  drawTimeSeries(
+    el(`${prefix}MagneticsChart`),
+    points,
+    MAGNETICS_SERIES,
+    "B (T), I (A), V (V)",
+    "Pressure (mbar), Needle (%)",
+  );
+}
+
+function historyForWindow(windowS) {
+  if (!state.history.length) {
+    return [];
+  }
+  const latest = state.history[state.history.length - 1].timestamp;
+  const cutoff = latest - windowS;
+  return state.history.filter((point) => point.timestamp >= cutoff);
+}
+
+function plotWindowLabel(minutes, pointCount) {
+  return `${minutes} min, ${pointCount} points`;
+}
+
+function clampCustomPlotMinutes(value) {
+  const minutes = Number(value);
+  if (!Number.isFinite(minutes)) {
+    return 120;
+  }
+  return Math.max(1, Math.min(1440, Math.round(minutes)));
+}
+
+function drawTimeSeries(canvas, points, series, leftUnit, rightUnit = null) {
   if (!canvas) {
     return;
   }
@@ -433,17 +485,17 @@ function drawTimeSeries(canvas, series, leftUnit, rightUnit = null) {
   };
 
   drawGrid(ctx, plot, width, height, scale);
-  if (state.history.length < 2) {
+  if (points.length < 2) {
     drawNoData(ctx, plot, scale);
     return;
   }
 
-  const minTime = state.history[0].timestamp;
-  const maxTime = state.history[state.history.length - 1].timestamp;
+  const minTime = points[0].timestamp;
+  const maxTime = points[points.length - 1].timestamp;
   const leftSeries = series.filter((item) => item.axis !== "right");
   const rightSeries = series.filter((item) => item.axis === "right");
-  const leftRange = valueRange(leftSeries);
-  const rightRange = rightSeries.length ? valueRange(rightSeries) : null;
+  const leftRange = valueRange(points, leftSeries);
+  const rightRange = rightSeries.length ? valueRange(points, rightSeries) : null;
 
   drawAxisLabels(ctx, plot, scale, leftRange, leftUnit, rightRange, rightUnit);
   drawTimeLabels(ctx, plot, scale, minTime, maxTime);
@@ -453,7 +505,7 @@ function drawTimeSeries(canvas, series, leftUnit, rightUnit = null) {
     if (!range) {
       continue;
     }
-    drawSeries(ctx, plot, minTime, maxTime, range, item);
+    drawSeries(ctx, plot, points, minTime, maxTime, range, item);
   }
 }
 
@@ -486,9 +538,9 @@ function drawNoData(ctx, plot, scale) {
   ctx.fillText("Waiting for data", plot.x + plot.w / 2, plot.y + plot.h / 2);
 }
 
-function valueRange(series) {
+function valueRange(points, series) {
   const values = [];
-  for (const point of state.history) {
+  for (const point of points) {
     for (const item of series) {
       const value = point[item.key];
       if (value !== null && value !== undefined && Number.isFinite(Number(value))) {
@@ -573,14 +625,14 @@ function formatClockTime(timestamp) {
   });
 }
 
-function drawSeries(ctx, plot, minTime, maxTime, range, item) {
+function drawSeries(ctx, plot, points, minTime, maxTime, range, item) {
   const timeSpan = Math.max(maxTime - minTime, 1);
   const valueSpan = Math.max(range.max - range.min, 1e-12);
   ctx.strokeStyle = item.color;
   ctx.lineWidth = 2;
   ctx.beginPath();
   let started = false;
-  for (const point of state.history) {
+  for (const point of points) {
     const value = point[item.key];
     if (value === null || value === undefined || !Number.isFinite(Number(value))) {
       started = false;

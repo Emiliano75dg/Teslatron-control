@@ -149,37 +149,81 @@
         <div class="panel-heading">
           <h2>Plots</h2>
           <div class="plot-controls">
-            <span id="plotWindow" class="muted">Last 10 min</span>
+            <span id="plotWindow" class="muted">No points</span>
+            <label class="plot-window-control">Custom window
+              <input id="customPlotMinutes" type="number" min="1" max="1440" step="1" value="120">
+              <span>min</span>
+            </label>
             <button id="clearPlots" class="ghost" type="button">Clear</button>
           </div>
         </div>
-        <div class="plot-grid">
-          <article class="plot-card">
-            <div class="plot-title">
-              <h3>Temperatures</h3>
-              <div class="legend">
-                <span><i class="sample-line"></i>Sample</span>
-                <span><i class="vti-line"></i>VTI</span>
-                <span><i class="magnet-line"></i>Magnet</span>
-                <span><i class="pt1-line"></i>PT1</span>
-                <span><i class="pt2-line"></i>PT2</span>
+        <div class="plot-block">
+          <div class="plot-block-heading">
+            <h3>Last 30 min</h3>
+            <span id="recentPlotWindow" class="muted">--</span>
+          </div>
+          <div class="plot-grid">
+            <article class="plot-card">
+              <div class="plot-title">
+                <h3>Temperatures</h3>
+                <div class="legend">
+                  <span><i class="sample-line"></i>Sample</span>
+                  <span><i class="vti-line"></i>VTI</span>
+                  <span><i class="magnet-line"></i>Magnet</span>
+                  <span><i class="pt1-line"></i>PT1</span>
+                  <span><i class="pt2-line"></i>PT2</span>
+                </div>
               </div>
-            </div>
-            <canvas id="temperatureChart" width="900" height="416"></canvas>
-          </article>
-          <article class="plot-card">
-            <div class="plot-title">
-              <h3>Magnetics and Flow</h3>
-              <div class="legend">
-                <span><i class="field-line"></i>Field</span>
-                <span><i class="current-line"></i>Current</span>
-                <span><i class="voltage-line"></i>Voltage</span>
-                <span><i class="pressure-line"></i>Pressure</span>
-                <span><i class="heater-line"></i>Needle</span>
+              <canvas id="recentTemperatureChart" width="900" height="416"></canvas>
+            </article>
+            <article class="plot-card">
+              <div class="plot-title">
+                <h3>Magnetics and Flow</h3>
+                <div class="legend">
+                  <span><i class="field-line"></i>Field</span>
+                  <span><i class="current-line"></i>Current</span>
+                  <span><i class="voltage-line"></i>Voltage</span>
+                  <span><i class="pressure-line"></i>Pressure</span>
+                  <span><i class="heater-line"></i>Needle</span>
+                </div>
               </div>
-            </div>
-            <canvas id="magneticsChart" width="900" height="416"></canvas>
-          </article>
+              <canvas id="recentMagneticsChart" width="900" height="416"></canvas>
+            </article>
+          </div>
+        </div>
+        <div class="plot-block">
+          <div class="plot-block-heading">
+            <h3>Custom window</h3>
+            <span id="customPlotWindow" class="muted">--</span>
+          </div>
+          <div class="plot-grid">
+            <article class="plot-card">
+              <div class="plot-title">
+                <h3>Temperatures</h3>
+                <div class="legend">
+                  <span><i class="sample-line"></i>Sample</span>
+                  <span><i class="vti-line"></i>VTI</span>
+                  <span><i class="magnet-line"></i>Magnet</span>
+                  <span><i class="pt1-line"></i>PT1</span>
+                  <span><i class="pt2-line"></i>PT2</span>
+                </div>
+              </div>
+              <canvas id="customTemperatureChart" width="900" height="416"></canvas>
+            </article>
+            <article class="plot-card">
+              <div class="plot-title">
+                <h3>Magnetics and Flow</h3>
+                <div class="legend">
+                  <span><i class="field-line"></i>Field</span>
+                  <span><i class="current-line"></i>Current</span>
+                  <span><i class="voltage-line"></i>Voltage</span>
+                  <span><i class="pressure-line"></i>Pressure</span>
+                  <span><i class="heater-line"></i>Needle</span>
+                </div>
+              </div>
+              <canvas id="customMagneticsChart" width="900" height="416"></canvas>
+            </article>
+          </div>
         </div>
       </section>
 

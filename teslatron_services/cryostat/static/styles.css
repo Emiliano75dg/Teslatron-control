@@ -302,6 +302,38 @@ dd {
 .plot-controls {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.plot-window-control {
+  display: grid;
+  grid-template-columns: auto 76px auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.plot-window-control input {
+  min-height: 30px;
+  padding: 4px 7px;
+}
+
+.plot-block {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.panel-heading + .plot-block {
+  margin-top: 0;
+}
+
+.plot-block-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 10px;
 }
 
