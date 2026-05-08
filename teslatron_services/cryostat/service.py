@@ -58,6 +58,8 @@ class CryostatService:
         self._ensure_writable()
         self._validate_temperature_loop(loop)
         self._validate_temperature(target_K, rate_K_per_min)
+        if loop == "both":
+            self._validate_temperature(target_K * 0.9, rate_K_per_min)
         self.backend.ramp_temperature(target_K, rate_K_per_min, loop=loop)
         await self.poll_once()
         return self._state.to_dict()

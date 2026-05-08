@@ -172,6 +172,27 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
             ],
         )
 
+    def test_ramp_temperature_both_sets_vti_target_ten_percent_lower(self) -> None:
+        backend = self.make_backend()
+
+        backend.ramp_temperature(10.0, 1.0, loop="both")
+
+        self.assertEqual(
+            backend.itc.commands,
+            [
+                "SET:DEV:DB8.T1:TEMP:LOOP:RENA:ON",
+                "SET:DEV:DB8.T1:TEMP:LOOP:RSET:1",
+                "SET:DEV:DB8.T1:TEMP:LOOP:TSET:10",
+                "SET:DEV:DB8.T1:TEMP:LOOP:ENAB:ON",
+                "SET:DEV:MB1.T1:TEMP:LOOP:RENA:ON",
+                "SET:DEV:MB1.T1:TEMP:LOOP:RSET:1",
+                "SET:DEV:MB1.T1:TEMP:LOOP:TSET:9",
+                "SET:DEV:MB1.T1:TEMP:LOOP:ENAB:ON",
+            ],
+        )
+        self.assertEqual(backend._sample_target_K, 10.0)
+        self.assertEqual(backend._vti_target_K, 9.0)
+
     def test_switch_heater_ready_blocks_until_delay_elapses(self) -> None:
         backend = self.make_backend()
         backend._switch_heater_target = SwitchHeaterStatus.ON
