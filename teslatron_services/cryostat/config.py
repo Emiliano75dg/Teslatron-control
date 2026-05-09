@@ -107,7 +107,6 @@ class CryostatServiceConfig:
         self.active_insert = profile_id
         self.sample_thermometer = profile.sample_thermometer
         self.itc = replace(profile.itc)
-        self.ips = replace(profile.ips)
         self.active_sample_sensor = _selected_sensor_for_profile(
             profile,
             self.sample_sensor_presets,
@@ -123,7 +122,7 @@ class CryostatServiceConfig:
         profile = self.active_insert_profile()
         if profile is None:
             return InsertCapabilitiesConfig()
-        return profile.capabilities
+        return _normalized_insert_capabilities(profile.capabilities)
 
     def available_sample_sensor_presets(self) -> dict[str, MercurySensorSetupConfig]:
         profile = self.active_insert_profile()
@@ -246,11 +245,27 @@ def _insert_profile_from_mapping(
         ),
         sample_thermometer=data.get("sample_thermometer", ""),
         notes=data.get("notes", ""),
-        capabilities=InsertCapabilitiesConfig(**(data.get("capabilities", {}) or {})),
+        capabilities=_normalized_insert_capabilities(
+            InsertCapabilitiesConfig(**(data.get("capabilities", {}) or {}))
+        ),
         sample_sensor_options=_sensor_option_ids(profile_id, data, sample_sensor_presets),
         default_sample_sensor=_default_sensor_option_id(profile_id, data, sample_sensor_presets),
         itc=MercuryITCConfig(**itc_data),
         ips=MercuryIPSConfig(**ips_data),
+    )
+
+
+def _normalized_insert_capabilities(
+    capabilities: InsertCapabilitiesConfig,
+) -> InsertCapabilitiesConfig:
+    return InsertCapabilitiesConfig(
+        temperature_control=capabilities.temperature_control,
+        sample_loop=capabilities.sample_loop,
+        vti_loop=capabilities.vti_loop,
+        gas_control=capabilities.gas_control,
+        field_control=True,
+        pid_control=capabilities.pid_control,
+        fixed_heater=capabilities.fixed_heater,
     )
 
 

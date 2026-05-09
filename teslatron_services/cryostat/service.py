@@ -83,7 +83,6 @@ class CryostatService:
 
     async def ramp_field(self, target_T: float, rate_T_per_min: float) -> dict[str, Any]:
         self._ensure_writable()
-        self._ensure_capability("field_control", "Field ramp is not supported for the active insert")
         self._validate_field(target_T, rate_T_per_min)
         self.backend.ramp_field(target_T, rate_T_per_min)
         await self.poll_once()
@@ -91,7 +90,6 @@ class CryostatService:
 
     async def ramp_to_zero(self, rate_T_per_min: float) -> dict[str, Any]:
         self._ensure_writable()
-        self._ensure_capability("field_control", "Field control is not supported for the active insert")
         self._validate_field(0.0, rate_T_per_min)
         self.backend.ramp_to_zero(rate_T_per_min)
         await self.poll_once()
@@ -99,21 +97,18 @@ class CryostatService:
 
     async def clamp(self) -> dict[str, Any]:
         self._ensure_writable()
-        self._ensure_capability("field_control", "Field control is not supported for the active insert")
         self.backend.clamp()
         await self.poll_once()
         return self._state.to_dict()
 
     async def hold(self) -> dict[str, Any]:
         self._ensure_writable()
-        self._ensure_hold_supported()
         self.backend.hold()
         await self.poll_once()
         return self._state.to_dict()
 
     async def abort(self) -> dict[str, Any]:
         self._ensure_writable()
-        self._ensure_hold_supported()
         self.backend.abort()
         await self.poll_once()
         return self._state.to_dict()
@@ -167,7 +162,6 @@ class CryostatService:
 
     async def set_switch_heater(self, enabled: bool) -> dict[str, Any]:
         self._ensure_writable()
-        self._ensure_capability("field_control", "Field control is not supported for the active insert")
         self.backend.set_switch_heater(enabled)
         await self.poll_once()
         return self._state.to_dict()
@@ -330,15 +324,6 @@ class CryostatService:
                 "VTI temperature loop is not supported for the active insert",
             )
 
-    def _ensure_hold_supported(self) -> None:
-        self._ensure_capability(
-            "temperature_control",
-            "Hold/abort is not supported because temperature control is disabled for the active insert",
-        )
-        self._ensure_capability(
-            "field_control",
-            "Hold/abort is not supported because field control is disabled for the active insert",
-        )
 
     def diagnostics(self) -> dict[str, Any]:
         return {

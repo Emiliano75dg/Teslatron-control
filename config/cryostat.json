@@ -33,7 +33,6 @@
           "sample_loop": true,
           "vti_loop": true,
           "gas_control": true,
-          "field_control": true,
           "pid_control": true,
           "fixed_heater": true
         }
@@ -49,7 +48,6 @@
           "sample_loop": true,
           "vti_loop": true,
           "gas_control": true,
-          "field_control": true,
           "pid_control": true,
           "fixed_heater": true
         }
@@ -65,7 +63,6 @@
           "sample_loop": true,
           "vti_loop": true,
           "gas_control": true,
-          "field_control": true,
           "pid_control": true,
           "fixed_heater": true
         }

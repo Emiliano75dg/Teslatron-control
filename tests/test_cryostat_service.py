@@ -104,13 +104,15 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_field_command_blocked_by_insert_capability(self) -> None:
         service = self.make_service(
-            capabilities=InsertCapabilitiesConfig(field_control=False)
+            capabilities=InsertCapabilitiesConfig(temperature_control=False)
         )
 
-        with self.assertRaises(PermissionError):
-            await service.ramp_field(1.0, 0.1)
+        await service.ramp_field(1.0, 0.1)
 
-        self.assertEqual(service.backend.calls, [])
+        self.assertEqual(
+            service.backend.calls,
+            [("ramp_field", 1.0, 0.1)],
+        )
 
     async def test_vti_loop_blocked_for_both_temperature_command(self) -> None:
         service = self.make_service(
@@ -149,3 +151,40 @@ class CryostatConfigTests(unittest.TestCase):
 
         self.assertEqual(config.active_insert, "fisher_probe")
         self.assertIn("fisher_probe", config.insert_profiles)
+
+    def test_insert_switch_changes_sample_thermometer_but_not_ips(self) -> None:
+        config = CryostatServiceConfig(
+            sample_thermometer="initial",
+            ips=config_from_mapping({}).ips,
+            insert_profiles={
+                "a": InsertProfileConfig(
+                    sample_thermometer="thermo A",
+                    itc=config_from_mapping({}).itc,
+                    ips=config_from_mapping({}).ips,
+                ),
+                "b": InsertProfileConfig(
+                    sample_thermometer="thermo B",
+                    itc=config_from_mapping({
+                        "cryostat": {
+                            "itc": {"probe_signal": "DB7.T1"}
+                        }
+                    }).itc,
+                    ips=config_from_mapping({
+                        "cryostat": {
+                            "ips": {"magnet_group": "GRPX"}
+                        }
+                    }).ips,
+                ),
+            },
+        )
+        original_ips = config.ips
+
+        config.apply_insert_profile("a")
+        self.assertEqual(config.sample_thermometer, "thermo A")
+        self.assertIs(config.ips, original_ips)
+
+        config.apply_insert_profile("b")
+        self.assertEqual(config.sample_thermometer, "thermo B")
+        self.assertEqual(config.itc.probe_signal, "DB7.T1")
+        self.assertIs(config.ips, original_ips)
+        self.assertEqual(config.ips.magnet_group, "GRPZ")

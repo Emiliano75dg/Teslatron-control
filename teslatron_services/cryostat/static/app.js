@@ -122,6 +122,7 @@ function activeCapabilities(config) {
     pid_control: true,
     fixed_heater: true,
     ...(profile.capabilities || {}),
+    field_control: true,
   };
 }
 
@@ -536,7 +537,6 @@ function summarizeCapabilities(capabilities) {
     ["sample_loop", "sample loop"],
     ["vti_loop", "VTI loop"],
     ["gas_control", "gas"],
-    ["field_control", "field"],
     ["pid_control", "PID"],
     ["fixed_heater", "fixed heater"],
   ];
