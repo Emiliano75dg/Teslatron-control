@@ -39,6 +39,7 @@ body {
 h1,
 h2,
 h3,
+h4,
 p {
   margin: 0;
 }
@@ -139,6 +140,11 @@ h3 {
   display: none;
 }
 
+.hidden,
+.hidden-by-capability {
+  display: none !important;
+}
+
 .panel {
   grid-column: span 6;
   background: var(--panel);
@@ -162,6 +168,14 @@ h3 {
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 12px;
+}
+
+.panel-heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .muted {
@@ -435,14 +449,55 @@ canvas {
 .command-panel {
   display: grid;
   grid-template-columns: 1fr;
+  gap: 8px;
+  max-width: 50%;
 }
 
 .command-form {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
   align-items: end;
-  margin-bottom: 10px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  width: 100%;
+}
+
+.command-panel label {
+  gap: 3px;
+  font-size: 11px;
+}
+
+.command-panel input,
+.command-panel select,
+.command-panel button {
+  min-height: 30px;
+  padding: 5px 7px;
+}
+
+.command-panel button[type="submit"],
+.command-panel .button-row button,
+.command-panel [data-command-control] {
+  width: auto;
+  min-width: 96px;
+}
+
+.command-form.pid-form {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(120px, 0.9fr) minmax(96px, auto);
+  align-items: center;
+}
+
+.command-form.pid-form .checkbox-label {
+  align-self: end;
+  min-height: 30px;
+  padding-bottom: 3px;
+}
+
+.command-form.pid-form button[type="submit"] {
+  min-width: 88px;
 }
 
 label {
@@ -515,12 +570,23 @@ button.ghost {
 
 .button-row {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  width: 100%;
+}
+
+.button-row .badge {
+  min-height: 32px;
 }
 
 .message {
   min-height: 20px;
-  margin-top: 10px;
+  margin-top: 2px;
   color: var(--muted);
 }
 
@@ -559,6 +625,63 @@ button.ghost {
   grid-column: span 2;
 }
 
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.profile-card {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+}
+
+.profile-card.active {
+  border-color: #8dc8a5;
+  box-shadow: inset 0 0 0 1px #d0ead9;
+}
+
+.profile-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.profile-card h4 {
+  font-size: 14px;
+  font-weight: 720;
+}
+
+.profile-notes {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sensor-config-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.5fr) minmax(160px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 10px;
+}
+
+.sensor-config-row output {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  color: var(--ink);
+}
+
 .config-json {
   max-height: 260px;
   margin: 0;
@@ -585,12 +708,20 @@ button.ghost {
     grid-column: span 12;
   }
 
+  .command-panel {
+    max-width: 100%;
+  }
+
   .summary-grid,
   .loop-grid,
   .field-grid,
   .plot-grid,
   .config-grid,
   .command-form {
+    grid-template-columns: 1fr;
+  }
+
+  .sensor-config-row {
     grid-template-columns: 1fr;
   }
 

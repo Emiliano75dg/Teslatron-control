@@ -80,19 +80,104 @@ function addEvent(message) {
 async function loadConfig() {
   const response = await fetch("/config");
   state.config = await response.json();
-  setText("subtitle", `${state.config.backend} backend`);
-  setText("readOnlyNotice", state.config.read_only ? "Read only" : "Writable mock/session");
-  setControlsEnabled(!state.config.read_only);
-  renderConfig(state.config);
+  applyConfigSnapshot(state.config);
+}
+
+function applyConfigSnapshot(config) {
+  state.config = config;
+  setText("subtitle", `${config.backend} backend`);
+  setText("readOnlyNotice", config.read_only ? "Read only" : "Writable mock/session");
+  applyCapabilities(config);
+  setControlsEnabled(!config.read_only);
+  renderConfig(config);
 }
 
 function setControlsEnabled(enabled) {
   document.querySelectorAll(".command-panel input, .command-panel select, .command-panel button")
     .forEach((node) => {
       if (node.id !== "clearEvents") {
-        node.disabled = !enabled;
+        const capabilityOwner = node.closest("[data-capability]");
+        const capabilityEnabled = capabilityOwner ? !capabilityOwner.classList.contains("hidden-by-capability") : true;
+        node.disabled = !enabled || !capabilityEnabled;
       }
     });
+  document.querySelectorAll("[data-command-control]").forEach((node) => {
+    const capabilityOwner = node.closest("[data-capability]");
+    const capabilityEnabled = capabilityOwner ? !capabilityOwner.classList.contains("hidden-by-capability") : true;
+    node.disabled = !enabled || !capabilityEnabled;
+  });
+}
+
+function activeCapabilities(config) {
+  const profiles = config && config.insert_profiles ? config.insert_profiles : {};
+  const profile = config && config.active_insert && profiles[config.active_insert]
+    ? profiles[config.active_insert]
+    : {};
+  return {
+    temperature_control: true,
+    sample_loop: true,
+    vti_loop: true,
+    gas_control: true,
+    field_control: true,
+    pid_control: true,
+    fixed_heater: true,
+    ...(profile.capabilities || {}),
+  };
+}
+
+function applyCapabilities(config) {
+  const capabilities = activeCapabilities(config);
+  document.querySelectorAll("[data-capability]").forEach((node) => {
+    const capabilityKey = node.dataset.capability;
+    const visible = capabilities[capabilityKey] !== false;
+    node.classList.toggle("hidden-by-capability", !visible);
+  });
+  syncLoopOptions(capabilities);
+  const notice = el("commandCapabilitiesNotice");
+  if (notice) {
+    const hiddenCount = document.querySelectorAll(".command-panel [data-capability].hidden-by-capability").length;
+    notice.classList.toggle("hidden", hiddenCount === 0);
+  }
+}
+
+function syncLoopOptions(capabilities) {
+  const sampleEnabled = capabilities.sample_loop !== false;
+  const vtiEnabled = capabilities.vti_loop !== false;
+  document.querySelectorAll("select[name='loop']").forEach((select) => {
+    const currentValue = select.value;
+    const sampleOption = select.querySelector("option[value='sample']");
+    const vtiOption = select.querySelector("option[value='vti']");
+    const bothOption = select.querySelector("option[value='both']");
+    if (sampleOption) {
+      sampleOption.disabled = !sampleEnabled;
+      sampleOption.hidden = !sampleEnabled;
+    }
+    if (vtiOption) {
+      vtiOption.disabled = !vtiEnabled;
+      vtiOption.hidden = !vtiEnabled;
+    }
+    if (bothOption) {
+      const bothEnabled = sampleEnabled && vtiEnabled;
+      bothOption.disabled = !bothEnabled;
+      bothOption.hidden = !bothEnabled;
+    }
+    const availableOption = Array.from(select.options).find((option) => !option.disabled && !option.hidden);
+    const selectedOption = select.selectedOptions && select.selectedOptions.length
+      ? select.selectedOptions[0]
+      : null;
+    if ((selectedOption && (selectedOption.disabled || selectedOption.hidden)) && availableOption) {
+      select.value = availableOption.value;
+    } else if (!select.value && availableOption) {
+      select.value = availableOption.value;
+    } else {
+      const currentOption = currentValue
+        ? select.querySelector(`option[value='${currentValue}']`)
+        : null;
+      if (currentOption && currentOption.disabled === false) {
+      select.value = currentValue;
+      }
+    }
+  });
 }
 
 function render(data) {
@@ -186,9 +271,55 @@ function renderField(field, switchHeater) {
   setText("fieldAtSetpoint", formatBool(field.at_setpoint));
   setText("fieldAtZero", formatBool(field.at_zero));
   setText("fieldClamped", formatBool(field.clamped));
-  setText("switchHeater", `${switchHeater.status} ${switchHeater.ready ? "ready" : "waiting"}`);
+  renderSwitchHeater(switchHeater);
   const normalized = Math.max(-1, Math.min(1, (field.B_T || 0) / 12));
   el("fieldNeedle").style.transform = `rotate(${normalized * 90}deg)`;
+}
+
+function renderSwitchHeater(switchHeater) {
+  const status = formatText(switchHeater.status);
+  const readiness = switchHeater.ready ? "ready" : "waiting";
+  const remainingText = formatSwitchHeaterRemaining(switchHeater);
+  setText("switchHeater", remainingText ? `${status} ${readiness}, ${remainingText}` : `${status} ${readiness}`);
+
+  let badgeLevel = "neutral";
+  let badgeText = `Switch ${status}`;
+  if (switchHeater.ready) {
+    badgeLevel = "ok";
+    badgeText = `Switch ${status} ready`;
+  } else if (switchHeater.status === "ON") {
+    badgeLevel = "warn";
+    badgeText = "Switch ON waiting";
+  } else if (switchHeater.status === "OFF") {
+    badgeLevel = "neutral";
+    badgeText = "Switch OFF waiting";
+  }
+  if (remainingText) {
+    badgeText = `${badgeText} ${remainingText}`;
+  }
+  setBadge("switchHeaterIpsBadge", badgeText, badgeLevel);
+  setBadge("switchHeaterCommandBadge", badgeText, badgeLevel);
+
+  const button = el("switchHeaterButton");
+  if (!button) {
+    return;
+  }
+  const shouldEnable = switchHeater.target_status !== "ON";
+  button.dataset.nextEnabled = shouldEnable ? "true" : "false";
+  button.textContent = shouldEnable ? "Switch ON" : "Switch OFF";
+}
+
+function formatSwitchHeaterRemaining(switchHeater) {
+  if (switchHeater.ready) {
+    return "";
+  }
+  const delayS = Number(switchHeater.delay_s);
+  const elapsedS = Number(switchHeater.elapsed_s);
+  if (!Number.isFinite(delayS)) {
+    return "";
+  }
+  const remainingS = Math.max(0, Math.ceil(delayS - (Number.isFinite(elapsedS) ? elapsedS : 0)));
+  return remainingS > 0 ? `${remainingS}s left` : "0s left";
 }
 
 function renderPressure(pressure) {
@@ -203,9 +334,12 @@ function renderConfig(config) {
   const itc = config.itc || {};
   const ips = config.ips || {};
   const safety = config.safety || {};
+  const capabilities = activeCapabilities(config);
 
   setText("configBackend", formatText(config.backend));
   setText("configReadOnly", formatBool(config.read_only));
+  setText("configActiveInsert", formatText(config.active_insert));
+  setText("configSampleThermometer", formatText(config.sample_thermometer));
   setText("configLogPath", formatText(config.log_path));
   setText("configPollInterval", formatUnit(config.poll_interval_s, "s", 3));
   setText("configLogInterval", formatUnit(config.log_interval_s, "s", 3));
@@ -235,7 +369,202 @@ function renderConfig(config) {
   setText("configMaxTemperatureRate", formatUnit(safety.max_temperature_rate_K_per_min, "K/min", 3));
   setText("configMaxField", formatUnit(safety.max_field_T, "T", 4));
   setText("configMaxFieldRate", formatUnit(safety.max_field_rate_T_per_min, "T/min", 4));
+  renderInsertProfiles(config, capabilities);
+  renderSampleSensorControls(config);
   setText("configJson", JSON.stringify(config, null, 2));
+}
+
+function renderInsertProfiles(config, capabilities) {
+  const container = el("insertProfilesList");
+  const empty = el("insertProfilesEmpty");
+  const profiles = config.insert_profiles || {};
+  const presets = config.sample_sensor_presets || {};
+  const activeProfileId = config.active_insert;
+
+  container.replaceChildren();
+  const entries = Object.entries(profiles);
+  if (!entries.length) {
+    empty.hidden = false;
+    return;
+  }
+
+  empty.hidden = true;
+  for (const [profileId, profile] of entries) {
+    const card = document.createElement("article");
+    card.className = `profile-card${profileId === activeProfileId ? " active" : ""}`;
+
+    const header = document.createElement("div");
+    header.className = "profile-card-header";
+
+    const titleBlock = document.createElement("div");
+    const title = document.createElement("h4");
+    title.textContent = profile.name || profileId;
+    const subtitle = document.createElement("p");
+    subtitle.className = "muted";
+    subtitle.textContent = profile.description || profileId;
+    titleBlock.append(title, subtitle);
+
+    const badge = document.createElement("span");
+    badge.className = `badge ${profileId === activeProfileId ? "ok" : "neutral"}`;
+    badge.textContent = profileId === activeProfileId ? "Active" : profileId;
+
+    header.append(titleBlock, badge);
+    card.appendChild(header);
+
+    const details = document.createElement("dl");
+    details.className = "dense-list";
+    appendProfileField(details, "Thermometer", profile.sample_thermometer);
+    appendProfileField(details, "Sample signal", profile.itc && profile.itc.probe_signal);
+    appendProfileField(details, "Sample loop", profile.itc && profile.itc.probe_loop);
+    appendProfileField(details, "Default sensor", profile.default_sample_sensor);
+    appendProfileField(details, "Sensor presets", summarizeSensorOptions(profile.sample_sensor_options, presets));
+    appendProfileField(details, "VTI signal", profile.itc && profile.itc.vti_signal);
+    appendProfileField(details, "VTI loop", profile.itc && profile.itc.vti_loop);
+    appendProfileField(details, "Pressure", profile.itc && profile.itc.pressure);
+    appendProfileField(details, "Magnet group", profile.ips && profile.ips.magnet_group);
+    card.appendChild(details);
+
+    const capabilityList = document.createElement("p");
+    capabilityList.className = "profile-notes";
+    capabilityList.textContent = `Functions: ${summarizeCapabilities(profile.capabilities || capabilities)}`;
+    card.appendChild(capabilityList);
+
+    if (profile.notes) {
+      const notes = document.createElement("p");
+      notes.className = "profile-notes";
+      notes.textContent = profile.notes;
+      card.appendChild(notes);
+    }
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ghost";
+    button.textContent = profileId === activeProfileId ? "Selected" : state.config && state.config.read_only ? "Read only" : "Activate";
+    button.disabled = profileId === activeProfileId || Boolean(state.config && state.config.read_only);
+    button.addEventListener("click", async () => {
+      await runCommand(
+        () => activateInsertProfile(profileId),
+        `Insert profile ${profile.name || profileId}`,
+      );
+    });
+    card.appendChild(button);
+    container.appendChild(card);
+  }
+}
+
+function appendProfileField(list, label, value) {
+  const dt = document.createElement("dt");
+  dt.textContent = label;
+  const dd = document.createElement("dd");
+  dd.textContent = formatText(value);
+  list.append(dt, dd);
+}
+
+function renderSampleSensorControls(config) {
+  const select = el("sampleSensorPreset");
+  const details = el("sampleSensorDetails");
+  const activeLabel = el("activeSampleSensor");
+  const applyButton = el("applySampleSensorButton");
+  if (!select || !details || !activeLabel || !applyButton) {
+    return;
+  }
+
+  const profiles = config.insert_profiles || {};
+  const profile = config.active_insert ? profiles[config.active_insert] || {} : {};
+  const presets = config.sample_sensor_presets || {};
+  const allowedIds = Array.isArray(profile.sample_sensor_options) && profile.sample_sensor_options.length
+    ? profile.sample_sensor_options.filter((presetId) => presets[presetId])
+    : Object.keys(presets);
+  const activePresetId = config.active_sample_sensor || "";
+
+  select.replaceChildren();
+  if (!allowedIds.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No saved sensors";
+    select.appendChild(option);
+    select.value = "";
+    details.textContent = "No sample sensor presets available for this insert.";
+    activeLabel.textContent = "None";
+    applyButton.disabled = true;
+    return;
+  }
+
+  for (const presetId of allowedIds) {
+    const preset = presets[presetId] || {};
+    const option = document.createElement("option");
+    option.value = presetId;
+    option.textContent = preset.calibration ? `${presetId} (${preset.calibration})` : presetId;
+    select.appendChild(option);
+  }
+
+  const selectedPresetId = allowedIds.includes(activePresetId) ? activePresetId : allowedIds[0];
+  select.value = selectedPresetId;
+  activeLabel.textContent = activePresetId || "None";
+  details.textContent = sampleSensorPresetSummary(presets[selectedPresetId]);
+  applyButton.disabled = Boolean(config.read_only) || !selectedPresetId;
+}
+
+function sampleSensorPresetSummary(preset) {
+  if (!preset) {
+    return "No sample sensor preset selected.";
+  }
+  const parts = [
+    preset.sensor_type,
+    preset.excitation_type,
+    preset.excitation_magnitude,
+    preset.calibration,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" | ") : "Preset is present but incomplete.";
+}
+
+async function activateInsertProfile(profileId) {
+  const config = await postJson("/config/activate-insert", { profile_id: profileId });
+  applyConfigSnapshot(config);
+  addEvent(`Active insert ${profileId}`);
+}
+
+async function applySampleSensorPreset(presetId) {
+  const config = await postJson("/config/apply-sample-sensor", { preset_id: presetId });
+  applyConfigSnapshot(config);
+  addEvent(`Sample sensor ${presetId} applied`);
+}
+
+function summarizeCapabilities(capabilities) {
+  const labels = [
+    ["temperature_control", "temperature"],
+    ["sample_loop", "sample loop"],
+    ["vti_loop", "VTI loop"],
+    ["gas_control", "gas"],
+    ["field_control", "field"],
+    ["pid_control", "PID"],
+    ["fixed_heater", "fixed heater"],
+  ];
+  return labels
+    .filter(([key]) => capabilities[key] !== false)
+    .map(([, label]) => label)
+    .join(", ");
+}
+
+function joinSensorExcitation(sensor) {
+  if (!sensor) {
+    return "--";
+  }
+  const excitationType = sensor.excitation_type || "";
+  const excitationMagnitude = sensor.excitation_magnitude || "";
+  return formatText([excitationType, excitationMagnitude].filter(Boolean).join(" "));
+}
+
+function summarizeSensorOptions(sensorOptionIds, presets) {
+  if (!Array.isArray(sensorOptionIds) || !sensorOptionIds.length) {
+    return "--";
+  }
+  return sensorOptionIds
+    .map((presetId) => {
+      const preset = presets[presetId] || {};
+      return preset.calibration ? `${presetId} (${preset.calibration})` : presetId;
+    })
+    .join(", ");
 }
 
 function connectWebSocket() {
@@ -337,6 +666,13 @@ function bindCommands() {
     }), "Field ramp");
   });
 
+  el("switchHeaterButton").addEventListener("click", async () => {
+    const enabled = el("switchHeaterButton").dataset.nextEnabled === "true";
+    await runCommand(() => postJson("/commands/ips/switch-heater", {
+      enabled,
+    }), enabled ? "Switch heater ON" : "Switch heater OFF");
+  });
+
   el("toZeroButton").addEventListener("click", () => {
     const rate = Number(new FormData(el("fieldForm")).get("rate_T_per_min"));
     return runCommand(() => postJson("/commands/ramp-to-zero", {
@@ -353,6 +689,18 @@ function bindCommands() {
     state.history = [];
     renderCharts();
     addEvent("Plots cleared");
+  });
+  el("sampleSensorPreset").addEventListener("change", (event) => {
+    const presetId = event.currentTarget.value;
+    const presets = state.config && state.config.sample_sensor_presets ? state.config.sample_sensor_presets : {};
+    setText("sampleSensorDetails", sampleSensorPresetSummary(presets[presetId]));
+  });
+  el("applySampleSensorButton").addEventListener("click", async () => {
+    const presetId = el("sampleSensorPreset").value;
+    await runCommand(
+      () => applySampleSensorPreset(presetId),
+      `Sample sensor ${presetId}`,
+    );
   });
   el("customPlotMinutes").addEventListener("change", (event) => {
     state.customPlotMinutes = clampCustomPlotMinutes(event.currentTarget.value);

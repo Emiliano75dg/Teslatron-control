@@ -36,22 +36,22 @@
           <span id="timestamp" class="muted">--</span>
         </div>
         <div class="summary-grid">
-          <div class="metric">
+          <div class="metric" data-capability="sample_loop">
             <span>Sample</span>
             <strong id="sampleTemperature">--</strong>
             <small id="sampleTarget">Target --</small>
           </div>
-          <div class="metric">
+          <div class="metric" data-capability="vti_loop">
             <span>VTI</span>
             <strong id="vtiTemperature">--</strong>
             <small id="vtiTarget">Target --</small>
           </div>
-          <div class="metric">
+          <div class="metric" data-capability="field_control">
             <span>Field</span>
             <strong id="fieldValue">--</strong>
             <small id="fieldTarget">Target --</small>
           </div>
-          <div class="metric">
+          <div class="metric" data-capability="gas_control">
             <span>Pressure</span>
             <strong id="pressureValue">--</strong>
             <small id="pressureTarget">Target --</small>
@@ -59,13 +59,13 @@
         </div>
       </section>
 
-      <section class="panel view-section hidden" data-view="itc">
+      <section class="panel view-section hidden" data-view="itc" data-capability="temperature_control">
         <div class="panel-heading">
           <h2>ITC</h2>
           <span class="muted">Sample and VTI loops</span>
         </div>
         <div class="loop-grid">
-          <article class="loop-block">
+          <article class="loop-block" data-capability="sample_loop">
             <h3>Sample</h3>
             <dl>
               <dt>Temperature</dt><dd id="sampleTemperatureDetail">--</dd>
@@ -81,7 +81,7 @@
               <dt>State</dt><dd id="sampleState">--</dd>
             </dl>
           </article>
-          <article class="loop-block">
+          <article class="loop-block" data-capability="vti_loop">
             <h3>VTI</h3>
             <dl>
               <dt>Temperature</dt><dd id="vtiTemperatureDetail">--</dd>
@@ -100,10 +100,13 @@
         </div>
       </section>
 
-      <section class="panel view-section hidden" data-view="ips">
+      <section class="panel view-section hidden" data-view="ips" data-capability="field_control">
         <div class="panel-heading">
           <h2>IPS</h2>
-          <span class="muted">Magnet and switch heater</span>
+          <div class="panel-heading-actions">
+            <span id="switchHeaterIpsBadge" class="badge neutral">Switch --</span>
+            <span class="muted">Magnet and switch heater</span>
+          </div>
         </div>
         <div class="field-grid">
           <div class="gauge">
@@ -129,7 +132,7 @@
         </div>
       </section>
 
-      <section class="panel view-section hidden" data-view="itc">
+      <section class="panel view-section hidden" data-view="itc" data-capability="gas_control">
         <div class="panel-heading">
           <h2>VTI Gas</h2>
           <span id="pressureMode" class="muted">--</span>
@@ -232,7 +235,8 @@
           <h2>Commands</h2>
           <span id="readOnlyNotice" class="muted">--</span>
         </div>
-        <form id="temperatureForm" class="command-form">
+        <p id="commandCapabilitiesNotice" class="muted hidden">Some commands are hidden because they are not available for the active insert.</p>
+        <form id="temperatureForm" class="command-form" data-capability="temperature_control">
           <label>Loop
             <select name="loop">
               <option value="sample">Sample</option>
@@ -248,7 +252,7 @@
           </label>
           <button type="submit">Ramp T</button>
         </form>
-        <form id="targetTemperatureForm" class="command-form">
+        <form id="targetTemperatureForm" class="command-form" data-capability="temperature_control">
           <label>Loop
             <select name="loop">
               <option value="sample">Sample</option>
@@ -261,7 +265,7 @@
           </label>
           <button type="submit">Set Target</button>
         </form>
-        <form id="fixedHeaterForm" class="command-form">
+        <form id="fixedHeaterForm" class="command-form" data-capability="fixed_heater">
           <label>Loop
             <select name="loop">
               <option value="sample">Sample</option>
@@ -274,7 +278,7 @@
           </label>
           <button type="submit">Fixed Power</button>
         </form>
-        <form id="pidForm" class="command-form pid-form">
+        <form id="pidForm" class="command-form pid-form" data-capability="pid_control">
           <label>Loop
             <select name="loop">
               <option value="sample">Sample</option>
@@ -297,7 +301,7 @@
           </label>
           <button type="submit">Set PID</button>
         </form>
-        <form id="gasForm" class="command-form">
+        <form id="gasForm" class="command-form" data-capability="gas_control">
           <label>Mode
             <select name="mode">
               <option value="pressure">Pressure</option>
@@ -312,7 +316,7 @@
           </label>
           <button type="submit">Set VTI Gas</button>
         </form>
-        <form id="fieldForm" class="command-form">
+        <form id="fieldForm" class="command-form" data-capability="field_control">
           <label>Target T
             <input name="target_T" type="number" step="0.0001" value="0">
           </label>
@@ -321,7 +325,9 @@
           </label>
           <button type="submit">Ramp B</button>
         </form>
-        <div class="button-row">
+        <div class="button-row" data-capability="field_control">
+          <span id="switchHeaterCommandBadge" class="badge neutral">Switch --</span>
+          <button id="switchHeaterButton" class="ghost" type="button" data-command-control>Switch Heater</button>
           <button id="toZeroButton" type="button">To Zero</button>
           <button id="holdButton" type="button">Hold</button>
           <button id="clampButton" type="button">Clamp</button>
@@ -333,7 +339,7 @@
       <section class="panel config-panel view-section hidden" data-view="config">
         <div class="panel-heading">
           <h2>Config</h2>
-          <span class="muted">Read-only service setup</span>
+          <span class="muted">Service setup and insert profiles</span>
         </div>
         <div class="config-grid">
           <article class="config-card">
@@ -341,6 +347,8 @@
             <dl class="dense-list">
               <dt>Backend</dt><dd id="configBackend">--</dd>
               <dt>Read only</dt><dd id="configReadOnly">--</dd>
+              <dt>Active insert</dt><dd id="configActiveInsert">--</dd>
+              <dt>Sample thermometer</dt><dd id="configSampleThermometer">--</dd>
               <dt>Log path</dt><dd id="configLogPath">--</dd>
               <dt>ITC address</dt><dd id="configItcAddress">--</dd>
               <dt>ITC timeout</dt><dd id="configItcTimeout">--</dd>
@@ -388,6 +396,30 @@
               <dt>Max field</dt><dd id="configMaxField">--</dd>
               <dt>Max B rate</dt><dd id="configMaxFieldRate">--</dd>
             </dl>
+          </article>
+          <article class="config-card wide">
+            <div class="panel-heading">
+              <h3>Insert Profiles</h3>
+              <span class="muted">Switch the hardware mapping for the selected insert</span>
+            </div>
+            <p id="insertProfilesEmpty" class="muted">No insert profiles configured.</p>
+            <div id="insertProfilesList" class="profile-grid"></div>
+          </article>
+          <article class="config-card wide">
+            <div class="panel-heading">
+              <h3>Sample Sensor</h3>
+              <span class="muted">Apply a saved Mercury sensor preset only when you want to reprogram the active insert</span>
+            </div>
+            <div class="sensor-config-row">
+              <label>Saved preset
+                <select id="sampleSensorPreset"></select>
+              </label>
+              <label>Selected preset
+                <output id="activeSampleSensor">None</output>
+              </label>
+              <button id="applySampleSensorButton" type="button">Apply To Mercury</button>
+            </div>
+            <p id="sampleSensorDetails" class="profile-notes">No sample sensor preset selected.</p>
           </article>
           <article class="config-card wide">
             <h3>Raw Snapshot</h3>

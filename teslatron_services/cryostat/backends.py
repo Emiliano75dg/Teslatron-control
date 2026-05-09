@@ -8,6 +8,7 @@ import time
 from time import monotonic, time as unix_time
 
 from .config import CryostatServiceConfig
+from .config import MercurySensorSetupConfig
 from .state import (
     CryostatMode,
     CryostatState,
@@ -28,6 +29,12 @@ LOW_FIELD_RATE_WINDOW_T = 1.0
 
 
 class CryostatBackend(ABC):
+    def close(self) -> None:
+        return None
+
+    def apply_sample_sensor(self, sensor: MercurySensorSetupConfig) -> None:
+        return None
+
     @abstractmethod
     def read_state(self) -> CryostatState:
         raise NotImplementedError
@@ -526,6 +533,19 @@ class MercuryResource:
         if elapsed < 0.005:
             time.sleep(0.005 - elapsed)
 
+    def close(self) -> None:
+        self._close_socket_connection()
+        if self.instrument is not None:
+            try:
+                self.instrument.close()
+            finally:
+                self.instrument = None
+        if self.resource_manager is not None:
+            try:
+                self.resource_manager.close()
+            finally:
+                self.resource_manager = None
+
     @staticmethod
     def _parse_socket_address(address: str) -> tuple[str, int] | None:
         match = re.fullmatch(r"TCPIP\d*::([^:]+)::(\d+)::SOCKET", address)
@@ -582,6 +602,29 @@ class MercuryCryostatBackend(CryostatBackend):
         self._switch_heater_changed_at: float | None = None
         self._mode = CryostatMode.IDLE
         self._aborted = False
+
+    def close(self) -> None:
+        self.itc.close()
+        self.ips.close()
+
+    def apply_sample_sensor(self, sensor: MercurySensorSetupConfig) -> None:
+        sensor_type = sensor.sensor_type.strip()
+        excitation_type = sensor.excitation_type.strip()
+        excitation_magnitude = sensor.excitation_magnitude.strip()
+        calibration = sensor.calibration.strip()
+        if not all((sensor_type, excitation_type, excitation_magnitude, calibration)):
+            raise ValueError(
+                "Selected sample sensor is incomplete; sensor type, excitation type, "
+                "excitation magnitude, and calibration are all required"
+            )
+        probe_signal = self.config.itc.probe_signal
+        self.itc.set(
+            "SET:DEV:"
+            f"{probe_signal}:TEMP:TYPE:{sensor_type}:"
+            f"EXCT:TYPE:{excitation_type}:"
+            f"MAG:{excitation_magnitude}:"
+            f"CALB:{calibration}:DAT"
+        )
 
     def read_state(self) -> CryostatState:
         probe_K = self._read_itc_float(

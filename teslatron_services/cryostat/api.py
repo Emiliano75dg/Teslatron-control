@@ -59,6 +59,14 @@ class SwitchHeaterRequest(BaseModel):
     enabled: bool
 
 
+class ActivateInsertRequest(BaseModel):
+    profile_id: str
+
+
+class ApplySampleSensorRequest(BaseModel):
+    preset_id: str
+
+
 async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
@@ -98,6 +106,14 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
     @app.get("/config")
     async def get_config() -> dict:
         return service.config_snapshot()
+
+    @app.post("/config/activate-insert")
+    async def activate_insert(request: ActivateInsertRequest) -> dict:
+        return await service.activate_insert_profile(request.profile_id)
+
+    @app.post("/config/apply-sample-sensor")
+    async def apply_sample_sensor(request: ApplySampleSensorRequest) -> dict:
+        return await service.apply_sample_sensor(request.preset_id)
 
     @app.get("/state")
     async def get_state() -> dict:

@@ -11,6 +11,7 @@ from teslatron_services.cryostat.backends import (
     _within_tolerance,
 )
 from teslatron_services.cryostat.config import CryostatServiceConfig
+from teslatron_services.cryostat.config import MercurySensorSetupConfig
 
 
 class FakeResource:
@@ -244,6 +245,38 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
             ["SET:DEV:GRPZ:PSU:SIG:RFST:0.3"],
         )
         self.assertEqual(backend._field_rate_T_per_min, 0.3)
+
+    def test_apply_sample_sensor_writes_full_sensor_setup(self) -> None:
+        backend = self.make_backend()
+
+        backend.apply_sample_sensor(
+            MercurySensorSetupConfig(
+                sensor_type="CERNOX",
+                excitation_type="CURR",
+                excitation_magnitude="10uA",
+                calibration="X205007",
+            )
+        )
+
+        self.assertEqual(
+            backend.itc.commands,
+            [
+                "SET:DEV:DB8.T1:TEMP:TYPE:CERNOX:EXCT:TYPE:CURR:MAG:10uA:CALB:X205007:DAT",
+            ],
+        )
+
+    def test_apply_sample_sensor_rejects_incomplete_setup(self) -> None:
+        backend = self.make_backend()
+
+        with self.assertRaises(ValueError):
+            backend.apply_sample_sensor(
+                MercurySensorSetupConfig(
+                    sensor_type="",
+                    excitation_type="CURR",
+                    excitation_magnitude="10uA",
+                    calibration="X205007",
+                )
+            )
 
 
 class MercuryBackendHelperTests(unittest.TestCase):

@@ -7,7 +7,7 @@ from time import monotonic
 from typing import Any
 
 from .backends import CryostatBackend, create_backend, list_visa_resources
-from .config import CryostatServiceConfig
+from .config import CryostatServiceConfig, InsertCapabilitiesConfig
 from .state import CryostatMode, CryostatState, SafetyState
 
 
@@ -39,6 +39,7 @@ class CryostatService:
         if self._task is not None:
             await self._task
             self._task = None
+        self.backend.close()
 
     async def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1)
@@ -57,6 +58,7 @@ class CryostatService:
     ) -> dict[str, Any]:
         self._ensure_writable()
         self._validate_temperature_loop(loop)
+        self._ensure_temperature_supported(loop)
         self._validate_temperature(target_K, rate_K_per_min)
         if loop == "both":
             self._validate_temperature(target_K * 0.9, rate_K_per_min)
@@ -71,6 +73,7 @@ class CryostatService:
     ) -> dict[str, Any]:
         self._ensure_writable()
         self._validate_temperature_loop(loop)
+        self._ensure_temperature_supported(loop)
         self._validate_temperature_target(target_K)
         if loop == "both":
             self._validate_temperature_target(target_K * 0.9)
@@ -80,6 +83,7 @@ class CryostatService:
 
     async def ramp_field(self, target_T: float, rate_T_per_min: float) -> dict[str, Any]:
         self._ensure_writable()
+        self._ensure_capability("field_control", "Field ramp is not supported for the active insert")
         self._validate_field(target_T, rate_T_per_min)
         self.backend.ramp_field(target_T, rate_T_per_min)
         await self.poll_once()
@@ -87,6 +91,7 @@ class CryostatService:
 
     async def ramp_to_zero(self, rate_T_per_min: float) -> dict[str, Any]:
         self._ensure_writable()
+        self._ensure_capability("field_control", "Field control is not supported for the active insert")
         self._validate_field(0.0, rate_T_per_min)
         self.backend.ramp_to_zero(rate_T_per_min)
         await self.poll_once()
@@ -94,24 +99,28 @@ class CryostatService:
 
     async def clamp(self) -> dict[str, Any]:
         self._ensure_writable()
+        self._ensure_capability("field_control", "Field control is not supported for the active insert")
         self.backend.clamp()
         await self.poll_once()
         return self._state.to_dict()
 
     async def hold(self) -> dict[str, Any]:
         self._ensure_writable()
+        self._ensure_hold_supported()
         self.backend.hold()
         await self.poll_once()
         return self._state.to_dict()
 
     async def abort(self) -> dict[str, Any]:
         self._ensure_writable()
+        self._ensure_hold_supported()
         self.backend.abort()
         await self.poll_once()
         return self._state.to_dict()
 
     async def set_vti_needle(self, needle_valve_percent: float) -> dict[str, Any]:
         self._ensure_writable()
+        self._ensure_capability("gas_control", "Gas control is not supported for the active insert")
         self._validate_needle_valve(needle_valve_percent)
         self.backend.set_vti_needle(needle_valve_percent)
         await self.poll_once()
@@ -119,6 +128,7 @@ class CryostatService:
 
     async def set_vti_pressure(self, pressure_mbar: float) -> dict[str, Any]:
         self._ensure_writable()
+        self._ensure_capability("gas_control", "Gas control is not supported for the active insert")
         self._validate_pressure(pressure_mbar)
         self.backend.set_vti_pressure(pressure_mbar)
         await self.poll_once()
@@ -131,6 +141,8 @@ class CryostatService:
     ) -> dict[str, Any]:
         self._ensure_writable()
         self._validate_temperature_loop(loop)
+        self._ensure_capability("fixed_heater", "Fixed heater mode is not supported for the active insert")
+        self._ensure_temperature_supported(loop)
         self._validate_heater_percent(heater_percent)
         self.backend.set_temperature_fixed_heater(loop, heater_percent)
         await self.poll_once()
@@ -146,6 +158,8 @@ class CryostatService:
     ) -> dict[str, Any]:
         self._ensure_writable()
         self._validate_temperature_loop(loop)
+        self._ensure_capability("pid_control", "PID control is not supported for the active insert")
+        self._ensure_temperature_supported(loop)
         self._validate_pid(p, i, d)
         self.backend.set_temperature_pid(loop, p, i, d, auto=auto)
         await self.poll_once()
@@ -153,9 +167,21 @@ class CryostatService:
 
     async def set_switch_heater(self, enabled: bool) -> dict[str, Any]:
         self._ensure_writable()
+        self._ensure_capability("field_control", "Field control is not supported for the active insert")
         self.backend.set_switch_heater(enabled)
         await self.poll_once()
         return self._state.to_dict()
+
+    async def apply_sample_sensor(self, preset_id: str) -> dict[str, Any]:
+        self._ensure_writable()
+        available = self.config.available_sample_sensor_presets()
+        if preset_id not in available:
+            raise ValueError(f"Unknown sample sensor preset for active insert: {preset_id}")
+        sensor = available[preset_id]
+        self.backend.apply_sample_sensor(sensor)
+        self.config.active_sample_sensor = preset_id
+        await self.poll_once()
+        return self.config_snapshot()
 
     async def poll_once(self) -> CryostatState:
         self._state = self._read_state_safely()
@@ -271,6 +297,49 @@ class CryostatService:
     def config_snapshot(self) -> dict[str, Any]:
         return self.config.to_dict()
 
+    async def activate_insert_profile(self, profile_id: str) -> dict[str, Any]:
+        self._ensure_writable()
+        try:
+            self.config.apply_insert_profile(profile_id)
+        except KeyError as exc:
+            raise ValueError(exc.args[0]) from exc
+        self._replace_backend()
+        await self.poll_once()
+        return self.config_snapshot()
+
+    def _capabilities(self) -> InsertCapabilitiesConfig:
+        return self.config.active_capabilities()
+
+    def _ensure_capability(self, capability: str, message: str) -> None:
+        if getattr(self._capabilities(), capability, True) is False:
+            raise PermissionError(message)
+
+    def _ensure_temperature_supported(self, loop: str) -> None:
+        self._ensure_capability(
+            "temperature_control",
+            "Temperature control is not supported for the active insert",
+        )
+        if loop in {"sample", "both"}:
+            self._ensure_capability(
+                "sample_loop",
+                "Sample temperature loop is not supported for the active insert",
+            )
+        if loop in {"vti", "both"}:
+            self._ensure_capability(
+                "vti_loop",
+                "VTI temperature loop is not supported for the active insert",
+            )
+
+    def _ensure_hold_supported(self) -> None:
+        self._ensure_capability(
+            "temperature_control",
+            "Hold/abort is not supported because temperature control is disabled for the active insert",
+        )
+        self._ensure_capability(
+            "field_control",
+            "Hold/abort is not supported because field control is disabled for the active insert",
+        )
+
     def diagnostics(self) -> dict[str, Any]:
         return {
             "service": {
@@ -298,6 +367,11 @@ class CryostatService:
         if target not in {"itc", "ips"}:
             raise ValueError("Diagnostic target must be 'itc' or 'ips'")
         return self.backend.diagnostic_query(target, normalized)
+
+    def _replace_backend(self) -> None:
+        self.backend.close()
+        self.backend = create_backend(self.config)
+        self._state = self._read_state_safely()
 
 
 def _flatten_state(data: dict[str, Any]) -> dict[str, Any]:
