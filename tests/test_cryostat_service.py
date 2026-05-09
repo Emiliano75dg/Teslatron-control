@@ -151,6 +151,7 @@ class CryostatConfigTests(unittest.TestCase):
 
         self.assertEqual(config.active_insert, "fisher_probe")
         self.assertIn("fisher_probe", config.insert_profiles)
+        self.assertEqual(config.available_sample_sensor_presets(), {})
 
     def test_insert_switch_changes_sample_thermometer_but_not_ips(self) -> None:
         config = CryostatServiceConfig(
@@ -160,7 +161,6 @@ class CryostatConfigTests(unittest.TestCase):
                 "a": InsertProfileConfig(
                     sample_thermometer="thermo A",
                     itc=config_from_mapping({}).itc,
-                    ips=config_from_mapping({}).ips,
                 ),
                 "b": InsertProfileConfig(
                     sample_thermometer="thermo B",
@@ -169,11 +169,6 @@ class CryostatConfigTests(unittest.TestCase):
                             "itc": {"probe_signal": "DB7.T1"}
                         }
                     }).itc,
-                    ips=config_from_mapping({
-                        "cryostat": {
-                            "ips": {"magnet_group": "GRPX"}
-                        }
-                    }).ips,
                 ),
             },
         )
@@ -188,3 +183,65 @@ class CryostatConfigTests(unittest.TestCase):
         self.assertEqual(config.itc.probe_signal, "DB7.T1")
         self.assertIs(config.ips, original_ips)
         self.assertEqual(config.ips.magnet_group, "GRPZ")
+
+    def test_insert_profile_with_ips_override_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cannot override IPS settings"):
+            config_from_mapping(
+                {
+                    "cryostat": {
+                        "insert_profiles": {
+                            "bad": {
+                                "ips": {"magnet_group": "GRPX"}
+                            }
+                        }
+                    }
+                }
+            )
+
+    def test_profile_without_sensor_whitelist_has_no_available_presets(self) -> None:
+        config = config_from_mapping(
+            {
+                "cryostat": {
+                    "active_insert": "probe_a",
+                    "sample_sensor_presets": {
+                        "sensor_a": {
+                            "sensor_type": "CERNOX",
+                            "excitation_type": "CURR",
+                            "excitation_magnitude": "10uA",
+                            "calibration": "X205007",
+                        }
+                    },
+                    "insert_profiles": {
+                        "probe_a": {
+                            "sample_thermometer": "Probe A",
+                        }
+                    },
+                }
+            }
+        )
+
+        self.assertEqual(config.available_sample_sensor_presets(), {})
+        self.assertIsNone(config.active_sample_sensor)
+
+    def test_default_sample_sensor_must_be_in_whitelist(self) -> None:
+        with self.assertRaisesRegex(ValueError, "not listed in sample_sensor_options"):
+            config_from_mapping(
+                {
+                    "cryostat": {
+                        "sample_sensor_presets": {
+                            "sensor_a": {
+                                "sensor_type": "CERNOX",
+                                "excitation_type": "CURR",
+                                "excitation_magnitude": "10uA",
+                                "calibration": "X205007",
+                            }
+                        },
+                        "insert_profiles": {
+                            "probe_a": {
+                                "sample_sensor_options": [],
+                                "default_sample_sensor": "sensor_a",
+                            }
+                        },
+                    }
+                }
+            )

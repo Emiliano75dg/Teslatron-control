@@ -77,7 +77,6 @@ class InsertProfileConfig:
     sample_sensor_options: list[str] = field(default_factory=list)
     default_sample_sensor: str | None = None
     itc: MercuryITCConfig = field(default_factory=MercuryITCConfig)
-    ips: MercuryIPSConfig = field(default_factory=MercuryIPSConfig)
 
 
 @dataclass(slots=True)
@@ -127,7 +126,7 @@ class CryostatServiceConfig:
     def available_sample_sensor_presets(self) -> dict[str, MercurySensorSetupConfig]:
         profile = self.active_insert_profile()
         if profile is None or not profile.sample_sensor_options:
-            return dict(self.sample_sensor_presets)
+            return {}
         return {
             preset_id: self.sample_sensor_presets[preset_id]
             for preset_id in profile.sample_sensor_options
@@ -193,7 +192,7 @@ def config_from_mapping(data: dict[str, Any]) -> CryostatServiceConfig:
                 "name": DEFAULT_INSERT_PROFILE_NAME,
                 "description": DEFAULT_INSERT_PROFILE_DESCRIPTION,
                 "sample_thermometer": cryostat.get("sample_thermometer", ""),
-                "sample_sensor_options": list(sample_sensor_presets),
+                "sample_sensor_options": [],
             },
             itc,
             ips,
@@ -229,14 +228,23 @@ def _insert_profile_from_mapping(
     default_ips: MercuryIPSConfig,
     sample_sensor_presets: dict[str, MercurySensorSetupConfig],
 ) -> InsertProfileConfig:
+    if data.get("ips"):
+        raise ValueError(
+            f"Insert profile {profile_id!r} cannot override IPS settings; "
+            "IPS configuration is global"
+        )
     itc_data = {
         **asdict(default_itc),
         **(data.get("itc", {}) or {}),
     }
-    ips_data = {
-        **asdict(default_ips),
-        **(data.get("ips", {}) or {}),
-    }
+    sample_sensor_options = _sensor_option_ids(profile_id, data, sample_sensor_presets)
+    default_sample_sensor = _default_sensor_option_id(profile_id, data, sample_sensor_presets)
+    _validate_sensor_options(
+        profile_id,
+        sample_sensor_options,
+        default_sample_sensor,
+        sample_sensor_presets,
+    )
     return InsertProfileConfig(
         name=data.get("name", DEFAULT_INSERT_PROFILE_NAME if profile_id == DEFAULT_INSERT_PROFILE_ID else profile_id),
         description=data.get(
@@ -248,10 +256,9 @@ def _insert_profile_from_mapping(
         capabilities=_normalized_insert_capabilities(
             InsertCapabilitiesConfig(**(data.get("capabilities", {}) or {}))
         ),
-        sample_sensor_options=_sensor_option_ids(profile_id, data, sample_sensor_presets),
-        default_sample_sensor=_default_sensor_option_id(profile_id, data, sample_sensor_presets),
+        sample_sensor_options=sample_sensor_options,
+        default_sample_sensor=default_sample_sensor,
         itc=MercuryITCConfig(**itc_data),
-        ips=MercuryIPSConfig(**ips_data),
     )
 
 
@@ -281,7 +288,7 @@ def _sensor_option_ids(
             legacy_id = _legacy_sensor_preset_id(data, profile_id)
             return [legacy_id]
     if raw_options is None:
-        return list(sample_sensor_presets)
+        return []
     return [str(option_id) for option_id in raw_options]
 
 
@@ -314,6 +321,27 @@ def _selected_sensor_for_profile(
     if profile.default_sample_sensor in available:
         return profile.default_sample_sensor
     return available[0] if available else None
+
+
+def _validate_sensor_options(
+    profile_id: str,
+    sample_sensor_options: list[str],
+    default_sample_sensor: str | None,
+    sample_sensor_presets: dict[str, MercurySensorSetupConfig],
+) -> None:
+    missing = [
+        sensor_id for sensor_id in sample_sensor_options if sensor_id not in sample_sensor_presets
+    ]
+    if missing:
+        raise ValueError(
+            f"Insert profile {profile_id!r} references unknown sample sensor presets: "
+            + ", ".join(sorted(missing))
+        )
+    if default_sample_sensor is not None and default_sample_sensor not in sample_sensor_options:
+        raise ValueError(
+            f"Insert profile {profile_id!r} has default_sample_sensor {default_sample_sensor!r} "
+            "which is not listed in sample_sensor_options"
+        )
 
 
 def _merge_legacy_profile_sensors(
