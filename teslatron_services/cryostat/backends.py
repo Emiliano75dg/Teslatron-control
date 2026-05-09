@@ -715,7 +715,6 @@ class MercuryCryostatBackend(CryostatBackend):
             MagnetAction.TO_SET,
             MagnetAction.TO_ZERO,
         }
-        self._maybe_adjust_field_rate(field_T, field_rate, field_ramping)
         pressure_mode = _pressure_mode_from_loop_state(
             pressure_loop_enabled,
             pressure_target,

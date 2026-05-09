@@ -122,7 +122,6 @@ function activeCapabilities(config) {
     pid_control: true,
     fixed_heater: true,
     ...(profile.capabilities || {}),
-    field_control: true,
   };
 }
 

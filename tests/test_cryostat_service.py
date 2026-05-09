@@ -1,3 +1,5 @@
+import asyncio
+import time
 import unittest
 
 from teslatron_services.cryostat.config import CryostatServiceConfig
@@ -78,6 +80,22 @@ class FakeBackend:
         return {"target": target, "command": command}
 
 
+class SlowBackend(FakeBackend):
+    def __init__(self):
+        super().__init__()
+        self.active_operations = 0
+        self.max_active_operations = 0
+
+    def ramp_field(self, target_T: float, rate_T_per_min: float) -> None:
+        self.active_operations += 1
+        self.max_active_operations = max(self.max_active_operations, self.active_operations)
+        try:
+            time.sleep(0.02)
+            super().ramp_field(target_T, rate_T_per_min)
+        finally:
+            self.active_operations -= 1
+
+
 class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
     def make_service(self, *, capabilities: InsertCapabilitiesConfig | None = None) -> CryostatService:
         config = CryostatServiceConfig(
@@ -104,14 +122,40 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_field_command_blocked_by_insert_capability(self) -> None:
         service = self.make_service(
+            capabilities=InsertCapabilitiesConfig(field_control=False)
+        )
+
+        with self.assertRaises(PermissionError):
+            await service.ramp_field(1.0, 0.1)
+
+        self.assertEqual(service.backend.calls, [])
+
+    async def test_field_command_ignores_unrelated_temperature_capability(self) -> None:
+        service = self.make_service(
             capabilities=InsertCapabilitiesConfig(temperature_control=False)
         )
 
         await service.ramp_field(1.0, 0.1)
 
+        self.assertEqual(service.backend.calls, [("ramp_field", 1.0, 0.1)])
+
+    async def test_hardware_commands_are_serialized(self) -> None:
+        backend = SlowBackend()
+        service = self.make_service()
+        service.backend = backend
+
+        await asyncio.gather(
+            service.ramp_field(1.0, 0.1),
+            service.ramp_field(2.0, 0.1),
+        )
+
+        self.assertEqual(backend.max_active_operations, 1)
         self.assertEqual(
-            service.backend.calls,
-            [("ramp_field", 1.0, 0.1)],
+            backend.calls,
+            [
+                ("ramp_field", 1.0, 0.1),
+                ("ramp_field", 2.0, 0.1),
+            ],
         )
 
     async def test_vti_loop_blocked_for_both_temperature_command(self) -> None:
@@ -183,6 +227,22 @@ class CryostatConfigTests(unittest.TestCase):
         self.assertEqual(config.itc.probe_signal, "DB7.T1")
         self.assertIs(config.ips, original_ips)
         self.assertEqual(config.ips.magnet_group, "GRPZ")
+
+    def test_field_control_capability_can_be_disabled_from_config(self) -> None:
+        config = config_from_mapping(
+            {
+                "cryostat": {
+                    "active_insert": "no_field",
+                    "insert_profiles": {
+                        "no_field": {
+                            "capabilities": {"field_control": False}
+                        }
+                    },
+                }
+            }
+        )
+
+        self.assertFalse(config.active_capabilities().field_control)
 
     def test_insert_profile_with_ips_override_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "cannot override IPS settings"):
