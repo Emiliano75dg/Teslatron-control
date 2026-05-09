@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import json
+from datetime import datetime
 from pathlib import Path
 from time import monotonic
-from typing import Any
+from typing import Any, Callable
 
 from .backends import CryostatBackend, create_backend, list_visa_resources
 from .config import CryostatServiceConfig, InsertCapabilitiesConfig
@@ -20,6 +22,7 @@ class CryostatService:
         self.config = config
         self.backend = backend or create_backend(config)
         self._state = self._read_state_safely()
+        self._hardware_lock = asyncio.Lock()
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
@@ -39,7 +42,8 @@ class CryostatService:
         if self._task is not None:
             await self._task
             self._task = None
-        self.backend.close()
+        async with self._hardware_lock:
+            await self._run_blocking(self.backend.close)
 
     async def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1)
@@ -62,9 +66,10 @@ class CryostatService:
         self._validate_temperature(target_K, rate_K_per_min)
         if loop == "both":
             self._validate_temperature(target_K * 0.9, rate_K_per_min)
-        self.backend.ramp_temperature(target_K, rate_K_per_min, loop=loop)
-        await self.poll_once()
-        return self._state.to_dict()
+        self._log_action("ramp_temperature", {"target_K": target_K, "rate_K_per_min": rate_K_per_min, "loop": loop})
+        return await self._run_hardware_transaction(
+            lambda: self.backend.ramp_temperature(target_K, rate_K_per_min, loop=loop)
+        )
 
     async def set_temperature_target(
         self,
@@ -77,57 +82,58 @@ class CryostatService:
         self._validate_temperature_target(target_K)
         if loop == "both":
             self._validate_temperature_target(target_K * 0.9)
-        self.backend.set_temperature_target(target_K, loop=loop)
-        await self.poll_once()
-        return self._state.to_dict()
+        return await self._run_hardware_transaction(
+            lambda: self.backend.set_temperature_target(target_K, loop=loop)
+        )
 
     async def ramp_field(self, target_T: float, rate_T_per_min: float) -> dict[str, Any]:
         self._ensure_writable()
+        self._ensure_field_supported()
         self._validate_field(target_T, rate_T_per_min)
-        self.backend.ramp_field(target_T, rate_T_per_min)
-        await self.poll_once()
-        return self._state.to_dict()
+        self._log_action("ramp_field", {"target_T": target_T, "rate_T_per_min": rate_T_per_min})
+        return await self._run_hardware_transaction(
+            lambda: self.backend.ramp_field(target_T, rate_T_per_min)
+        )
 
     async def ramp_to_zero(self, rate_T_per_min: float) -> dict[str, Any]:
         self._ensure_writable()
+        self._ensure_field_supported()
         self._validate_field(0.0, rate_T_per_min)
-        self.backend.ramp_to_zero(rate_T_per_min)
-        await self.poll_once()
-        return self._state.to_dict()
+        return await self._run_hardware_transaction(
+            lambda: self.backend.ramp_to_zero(rate_T_per_min)
+        )
 
     async def clamp(self) -> dict[str, Any]:
         self._ensure_writable()
-        self.backend.clamp()
-        await self.poll_once()
-        return self._state.to_dict()
+        self._ensure_field_supported()
+        self._log_action("clamp", {})
+        return await self._run_hardware_transaction(self.backend.clamp)
 
     async def hold(self) -> dict[str, Any]:
         self._ensure_writable()
-        self.backend.hold()
-        await self.poll_once()
-        return self._state.to_dict()
+        self._log_action("hold", {})
+        return await self._run_hardware_transaction(self.backend.hold)
 
     async def abort(self) -> dict[str, Any]:
         self._ensure_writable()
-        self.backend.abort()
-        await self.poll_once()
-        return self._state.to_dict()
+        self._log_action("abort", {})
+        return await self._run_hardware_transaction(self.backend.abort)
 
     async def set_vti_needle(self, needle_valve_percent: float) -> dict[str, Any]:
         self._ensure_writable()
         self._ensure_capability("gas_control", "Gas control is not supported for the active insert")
         self._validate_needle_valve(needle_valve_percent)
-        self.backend.set_vti_needle(needle_valve_percent)
-        await self.poll_once()
-        return self._state.to_dict()
+        return await self._run_hardware_transaction(
+            lambda: self.backend.set_vti_needle(needle_valve_percent)
+        )
 
     async def set_vti_pressure(self, pressure_mbar: float) -> dict[str, Any]:
         self._ensure_writable()
         self._ensure_capability("gas_control", "Gas control is not supported for the active insert")
         self._validate_pressure(pressure_mbar)
-        self.backend.set_vti_pressure(pressure_mbar)
-        await self.poll_once()
-        return self._state.to_dict()
+        return await self._run_hardware_transaction(
+            lambda: self.backend.set_vti_pressure(pressure_mbar)
+        )
 
     async def set_temperature_fixed_heater(
         self,
@@ -139,9 +145,9 @@ class CryostatService:
         self._ensure_capability("fixed_heater", "Fixed heater mode is not supported for the active insert")
         self._ensure_temperature_supported(loop)
         self._validate_heater_percent(heater_percent)
-        self.backend.set_temperature_fixed_heater(loop, heater_percent)
-        await self.poll_once()
-        return self._state.to_dict()
+        return await self._run_hardware_transaction(
+            lambda: self.backend.set_temperature_fixed_heater(loop, heater_percent)
+        )
 
     async def set_temperature_pid(
         self,
@@ -156,37 +162,53 @@ class CryostatService:
         self._ensure_capability("pid_control", "PID control is not supported for the active insert")
         self._ensure_temperature_supported(loop)
         self._validate_pid(p, i, d)
-        self.backend.set_temperature_pid(loop, p, i, d, auto=auto)
-        await self.poll_once()
-        return self._state.to_dict()
+        return await self._run_hardware_transaction(
+            lambda: self.backend.set_temperature_pid(loop, p, i, d, auto=auto)
+        )
 
     async def set_switch_heater(self, enabled: bool) -> dict[str, Any]:
         self._ensure_writable()
-        self.backend.set_switch_heater(enabled)
-        await self.poll_once()
-        return self._state.to_dict()
+        self._ensure_field_supported()
+        self._log_action("set_switch_heater", {"enabled": enabled})
+        return await self._run_hardware_transaction(
+            lambda: self.backend.set_switch_heater(enabled)
+        )
 
     async def apply_sample_sensor(self, preset_id: str) -> dict[str, Any]:
         self._ensure_writable()
         available = self.config.available_sample_sensor_presets()
         if preset_id not in available:
             raise ValueError(f"Unknown sample sensor preset for active insert: {preset_id}")
+        self._log_action("apply_sample_sensor", {"preset_id": preset_id})
         sensor = available[preset_id]
-        self.backend.apply_sample_sensor(sensor)
+        await self._run_hardware_transaction(lambda: self.backend.apply_sample_sensor(sensor))
         self.config.active_sample_sensor = preset_id
-        await self.poll_once()
         return self.config_snapshot()
 
     async def poll_once(self) -> CryostatState:
-        self._state = self._read_state_safely()
+        async with self._hardware_lock:
+            self._state = await self._run_blocking(self._read_state_safely)
         data = self._state.to_dict()
-        await self._publish(data)
+        await self._publish_and_log(data)
+        return self._state
 
+    async def _run_hardware_transaction(
+        self,
+        operation: Callable[[], None],
+    ) -> dict[str, Any]:
+        async with self._hardware_lock:
+            await self._run_blocking(operation)
+            self._state = await self._run_blocking(self._read_state_safely)
+        data = self._state.to_dict()
+        await self._publish_and_log(data)
+        return data
+
+    async def _publish_and_log(self, data: dict[str, Any]) -> None:
+        await self._publish(data)
         now = monotonic()
         if now - self._last_log >= self.config.log_interval_s:
-            self._append_log(data)
+            await self._run_blocking(lambda: self._append_log(data))
             self._last_log = now
-        return self._state
 
     def _read_state_safely(self) -> CryostatState:
         try:
@@ -237,7 +259,30 @@ class CryostatService:
 
     def _append_log(self, data: dict[str, Any]) -> None:
         row = _flatten_state(data)
-        path = _compatible_log_path(Path(self.config.log_path), list(row.keys()))
+        today = datetime.now().strftime("%Y-%m-%d")
+        filename = f"cryostat_environment_{today}.csv"
+        path = Path(self.config.log_dir) / filename
+        path = _compatible_log_path(path, list(row.keys()))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        exists = path.exists()
+        with path.open("a", newline="") as file:
+            writer = csv.DictWriter(file, fieldnames=list(row.keys()))
+            if not exists:
+                writer.writeheader()
+            writer.writerow(row)
+
+    def _log_action(self, action: str, params: dict[str, Any], status: str = "success") -> None:
+        if not self.config.log_actions:
+            return
+        row = {
+            "timestamp": datetime.now().isoformat(),
+            "action": action,
+            "parameters": json.dumps(params),
+            "status": status,
+        }
+        today = datetime.now().strftime("%Y-%m-%d")
+        filename = f"cryostat_actions_{today}.csv"
+        path = Path(self.config.log_dir) / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         exists = path.exists()
         with path.open("a", newline="") as file:
@@ -293,12 +338,14 @@ class CryostatService:
 
     async def activate_insert_profile(self, profile_id: str) -> dict[str, Any]:
         self._ensure_writable()
+        self._log_action("activate_insert_profile", {"profile_id": profile_id})
         try:
             self.config.apply_insert_profile(profile_id)
         except KeyError as exc:
             raise ValueError(exc.args[0]) from exc
-        self._replace_backend()
-        await self.poll_once()
+        async with self._hardware_lock:
+            await self._run_blocking(self._replace_backend)
+        await self._publish_and_log(self._state.to_dict())
         return self.config_snapshot()
 
     def _capabilities(self) -> InsertCapabilitiesConfig:
@@ -307,6 +354,12 @@ class CryostatService:
     def _ensure_capability(self, capability: str, message: str) -> None:
         if getattr(self._capabilities(), capability, True) is False:
             raise PermissionError(message)
+
+    def _ensure_field_supported(self) -> None:
+        self._ensure_capability(
+            "field_control",
+            "Field control is not supported for the active insert",
+        )
 
     def _ensure_temperature_supported(self, loop: str) -> None:
         self._ensure_capability(
@@ -324,7 +377,6 @@ class CryostatService:
                 "VTI temperature loop is not supported for the active insert",
             )
 
-
     def diagnostics(self) -> dict[str, Any]:
         return {
             "service": {
@@ -336,27 +388,38 @@ class CryostatService:
             "backend": self.backend.diagnostics(),
         }
 
-    def visa_resources(self) -> dict[str, Any]:
-        return list_visa_resources()
+    async def visa_resources(self) -> dict[str, Any]:
+        async with self._hardware_lock:
+            return await self._run_blocking(list_visa_resources)
 
-    def catalog(self) -> dict[str, Any]:
-        return self.backend.catalog()
+    async def catalog(self) -> dict[str, Any]:
+        async with self._hardware_lock:
+            return await self._run_blocking(self.backend.catalog)
 
-    def raw_readings(self) -> dict[str, Any]:
-        return self.backend.raw_readings()
+    async def raw_readings(self) -> dict[str, Any]:
+        async with self._hardware_lock:
+            return await self._run_blocking(self.backend.raw_readings)
 
-    def diagnostic_query(self, target: str, command: str) -> dict[str, Any]:
+    async def diagnostic_query(self, target: str, command: str) -> dict[str, Any]:
         normalized = command.strip()
         if not normalized.startswith("READ:"):
             raise ValueError("Diagnostic query only allows READ commands")
         if target not in {"itc", "ips"}:
             raise ValueError("Diagnostic target must be 'itc' or 'ips'")
-        return self.backend.diagnostic_query(target, normalized)
+        async with self._hardware_lock:
+            return await self._run_blocking(
+                lambda: self.backend.diagnostic_query(target, normalized)
+            )
 
     def _replace_backend(self) -> None:
         self.backend.close()
         self.backend = create_backend(self.config)
         self._state = self._read_state_safely()
+
+    async def _run_blocking(self, operation: Callable[[], Any]) -> Any:
+        if self.config.backend == "mercury":
+            return await asyncio.to_thread(operation)
+        return operation()
 
 
 def _flatten_state(data: dict[str, Any]) -> dict[str, Any]:

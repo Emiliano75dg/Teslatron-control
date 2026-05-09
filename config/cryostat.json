@@ -6,7 +6,8 @@
     "active_sample_sensor": "fisher_cernox",
     "poll_interval_s": 1.0,
     "log_interval_s": 20.0,
-    "log_path": "data/cryostat_environment.csv",
+    "log_dir": "data",
+    "log_actions": true,
     "sample_sensor_presets": {
       "fisher_cernox": {
         "sensor_type": "CERNOX",

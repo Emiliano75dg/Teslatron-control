@@ -85,7 +85,8 @@ class CryostatServiceConfig:
     read_only: bool = False
     poll_interval_s: float = 1.0
     log_interval_s: float = 20.0
-    log_path: str = "data/cryostat_environment.csv"
+    log_dir: str = "data"
+    log_actions: bool = True
     sample_thermometer: str = ""
     active_insert: str | None = None
     insert_profiles: dict[str, InsertProfileConfig] = field(default_factory=dict)
@@ -205,7 +206,8 @@ def config_from_mapping(data: dict[str, Any]) -> CryostatServiceConfig:
         read_only=bool(cryostat.get("read_only", False)),
         poll_interval_s=float(cryostat.get("poll_interval_s", 1.0)),
         log_interval_s=float(cryostat.get("log_interval_s", 20.0)),
-        log_path=cryostat.get("log_path", "data/cryostat_environment.csv"),
+        log_dir=cryostat.get("log_dir", "data"),
+        log_actions=bool(cryostat.get("log_actions", True)),
         sample_thermometer=cryostat.get("sample_thermometer", ""),
         active_insert=active_insert,
         insert_profiles=insert_profiles,
@@ -270,7 +272,7 @@ def _normalized_insert_capabilities(
         sample_loop=capabilities.sample_loop,
         vti_loop=capabilities.vti_loop,
         gas_control=capabilities.gas_control,
-        field_control=True,
+        field_control=capabilities.field_control,
         pid_control=capabilities.pid_control,
         fixed_heater=capabilities.fixed_heater,
     )
