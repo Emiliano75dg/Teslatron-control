@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import csv
-import json
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
@@ -66,7 +65,6 @@ class CryostatService:
         self._validate_temperature(target_K, rate_K_per_min)
         if loop == "both":
             self._validate_temperature(target_K * 0.9, rate_K_per_min)
-        self._log_action("ramp_temperature", {"target_K": target_K, "rate_K_per_min": rate_K_per_min, "loop": loop})
         return await self._run_hardware_transaction(
             lambda: self.backend.ramp_temperature(target_K, rate_K_per_min, loop=loop)
         )
@@ -90,7 +88,6 @@ class CryostatService:
         self._ensure_writable()
         self._ensure_field_supported()
         self._validate_field(target_T, rate_T_per_min)
-        self._log_action("ramp_field", {"target_T": target_T, "rate_T_per_min": rate_T_per_min})
         return await self._run_hardware_transaction(
             lambda: self.backend.ramp_field(target_T, rate_T_per_min)
         )
@@ -106,17 +103,14 @@ class CryostatService:
     async def clamp(self) -> dict[str, Any]:
         self._ensure_writable()
         self._ensure_field_supported()
-        self._log_action("clamp", {})
         return await self._run_hardware_transaction(self.backend.clamp)
 
     async def hold(self) -> dict[str, Any]:
         self._ensure_writable()
-        self._log_action("hold", {})
         return await self._run_hardware_transaction(self.backend.hold)
 
     async def abort(self) -> dict[str, Any]:
         self._ensure_writable()
-        self._log_action("abort", {})
         return await self._run_hardware_transaction(self.backend.abort)
 
     async def set_vti_needle(self, needle_valve_percent: float) -> dict[str, Any]:
@@ -169,7 +163,6 @@ class CryostatService:
     async def set_switch_heater(self, enabled: bool) -> dict[str, Any]:
         self._ensure_writable()
         self._ensure_field_supported()
-        self._log_action("set_switch_heater", {"enabled": enabled})
         return await self._run_hardware_transaction(
             lambda: self.backend.set_switch_heater(enabled)
         )
@@ -179,7 +172,6 @@ class CryostatService:
         available = self.config.available_sample_sensor_presets()
         if preset_id not in available:
             raise ValueError(f"Unknown sample sensor preset for active insert: {preset_id}")
-        self._log_action("apply_sample_sensor", {"preset_id": preset_id})
         sensor = available[preset_id]
         await self._run_hardware_transaction(lambda: self.backend.apply_sample_sensor(sensor))
         self.config.active_sample_sensor = preset_id
@@ -271,26 +263,6 @@ class CryostatService:
                 writer.writeheader()
             writer.writerow(row)
 
-    def _log_action(self, action: str, params: dict[str, Any], status: str = "success") -> None:
-        if not self.config.log_actions:
-            return
-        row = {
-            "timestamp": datetime.now().isoformat(),
-            "action": action,
-            "parameters": json.dumps(params),
-            "status": status,
-        }
-        today = datetime.now().strftime("%Y-%m-%d")
-        filename = f"cryostat_actions_{today}.csv"
-        path = Path(self.config.log_dir) / filename
-        path.parent.mkdir(parents=True, exist_ok=True)
-        exists = path.exists()
-        with path.open("a", newline="") as file:
-            writer = csv.DictWriter(file, fieldnames=list(row.keys()))
-            if not exists:
-                writer.writeheader()
-            writer.writerow(row)
-
     def _validate_temperature(self, target_K: float, rate_K_per_min: float) -> None:
         self._validate_temperature_target(target_K)
         safety = self.config.safety
@@ -338,7 +310,6 @@ class CryostatService:
 
     async def activate_insert_profile(self, profile_id: str) -> dict[str, Any]:
         self._ensure_writable()
-        self._log_action("activate_insert_profile", {"profile_id": profile_id})
         try:
             self.config.apply_insert_profile(profile_id)
         except KeyError as exc:

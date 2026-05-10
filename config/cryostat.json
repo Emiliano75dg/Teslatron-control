@@ -7,7 +7,6 @@
     "poll_interval_s": 1.0,
     "log_interval_s": 20.0,
     "log_dir": "data",
-    "log_actions": true,
     "sample_sensor_presets": {
       "fisher_cernox": {
         "sensor_type": "CERNOX",

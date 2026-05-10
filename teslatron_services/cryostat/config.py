@@ -86,7 +86,6 @@ class CryostatServiceConfig:
     poll_interval_s: float = 1.0
     log_interval_s: float = 20.0
     log_dir: str = "data"
-    log_actions: bool = True
     sample_thermometer: str = ""
     active_insert: str | None = None
     insert_profiles: dict[str, InsertProfileConfig] = field(default_factory=dict)
@@ -207,7 +206,6 @@ def config_from_mapping(data: dict[str, Any]) -> CryostatServiceConfig:
         poll_interval_s=float(cryostat.get("poll_interval_s", 1.0)),
         log_interval_s=float(cryostat.get("log_interval_s", 20.0)),
         log_dir=cryostat.get("log_dir", "data"),
-        log_actions=bool(cryostat.get("log_actions", True)),
         sample_thermometer=cryostat.get("sample_thermometer", ""),
         active_insert=active_insert,
         insert_profiles=insert_profiles,
