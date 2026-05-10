@@ -4,6 +4,7 @@ const state = {
   lastError: null,
   history: [],
   customPlotMinutes: 120,
+  recipeSteps: [],
 };
 
 const el = (id) => document.getElementById(id);
@@ -89,6 +90,7 @@ function applyConfigSnapshot(config) {
   setText("readOnlyNotice", config.read_only ? "Read only" : "Writable mock/session");
   applyCapabilities(config);
   setControlsEnabled(!config.read_only);
+  setRecipeControlsEnabled(!config.read_only);
   renderConfig(config);
 }
 
@@ -106,6 +108,14 @@ function setControlsEnabled(enabled) {
     const capabilityEnabled = capabilityOwner ? !capabilityOwner.classList.contains("hidden-by-capability") : true;
     node.disabled = !enabled || !capabilityEnabled;
   });
+}
+
+function setRecipeControlsEnabled(enabled) {
+  document.querySelectorAll(".recipe-panel input, .recipe-panel select, .recipe-panel button")
+    .forEach((node) => {
+      node.disabled = !enabled;
+    });
+  updateRecipeControlState();
 }
 
 function activeCapabilities(config) {
@@ -206,6 +216,7 @@ function render(data) {
   renderLoop("vti", vti);
   renderField(field, switchHeater);
   renderPressure(pressure);
+  renderRecipeStatus(data.recipe || {});
   recordHistory(data);
   renderCharts();
 
@@ -217,6 +228,28 @@ function render(data) {
     addEvent(data.error);
     state.lastError = data.error;
   }
+}
+
+function renderRecipeStatus(recipe) {
+  const status = recipe.status || "idle";
+  const level = status === "completed"
+    ? "ok"
+    : status === "error" || status === "aborted"
+      ? "error"
+      : status === "waiting_signal"
+        ? "warn"
+        : "neutral";
+  setBadge("recipeStatusBadge", status, level);
+  setText("recipeName", formatText(recipe.name));
+  setText("recipeStatus", status);
+  const stepIndex = recipe.current_step_index;
+  const stepCount = Array.isArray(recipe.steps) ? recipe.steps.length : 0;
+  const stepLabel = stepIndex === null || stepIndex === undefined
+    ? "--"
+    : `${Number(stepIndex) + 1}/${stepCount} ${recipeStepSummary(recipe.current_step || {})}`;
+  setText("recipeStep", stepLabel);
+  setText("recipeMessageDetail", formatText(recipe.message || recipe.error));
+  updateRecipeControlState(status);
 }
 
 function recordHistory(data) {
@@ -604,6 +637,143 @@ async function postJson(url, payload = null) {
   return text ? JSON.parse(text) : {};
 }
 
+function currentRecipeStepFromForm() {
+  const type = el("recipeStepType").value;
+  if (type === "ramp_temperature") {
+    return {
+      type,
+      loop: el("recipeLoop").value,
+      target_K: Number(el("recipeTargetK").value),
+      rate_K_per_min: Number(el("recipeRateK").value),
+      tolerance_K: Number(el("recipeToleranceK").value),
+      stable_s: Number(el("recipeStableS").value),
+    };
+  }
+  if (type === "set_temperature_target") {
+    return {
+      type,
+      loop: el("recipeLoop").value,
+      target_K: Number(el("recipeTargetK").value),
+    };
+  }
+  if (type === "ramp_field") {
+    return {
+      type,
+      target_T: Number(el("recipeTargetT").value),
+      rate_T_per_min: Number(el("recipeRateT").value),
+      tolerance_T: Number(el("recipeToleranceT").value),
+      stable_s: Number(el("recipeStableS").value),
+    };
+  }
+  if (type === "ramp_to_zero") {
+    return {
+      type,
+      rate_T_per_min: Number(el("recipeRateT").value),
+      tolerance_T: Number(el("recipeToleranceT").value),
+      stable_s: Number(el("recipeStableS").value),
+    };
+  }
+  if (type === "wait") {
+    return {
+      type,
+      duration_s: Number(el("recipeWaitS").value),
+    };
+  }
+  return {
+    type: "signal",
+    signal: el("recipeSignal").value || "measurement_done",
+    message: el("recipeNotice").value || "Continue when ready",
+  };
+}
+
+function recipeStepSummary(step) {
+  if (step.type === "ramp_temperature") {
+    return `Ramp ${step.loop} to ${formatNumber(step.target_K, 3)} K at ${formatNumber(step.rate_K_per_min, 3)} K/min, wait ±${formatNumber(step.tolerance_K, 3)} K`;
+  }
+  if (step.type === "set_temperature_target") {
+    return `Set ${step.loop} target ${formatNumber(step.target_K, 3)} K`;
+  }
+  if (step.type === "ramp_field") {
+    return `Ramp B to ${formatNumber(step.target_T, 4)} T at ${formatNumber(step.rate_T_per_min, 4)} T/min, wait IPS`;
+  }
+  if (step.type === "ramp_to_zero") {
+    return `Ramp B to zero at ${formatNumber(step.rate_T_per_min, 4)} T/min, wait IPS`;
+  }
+  if (step.type === "wait") {
+    return `Wait ${formatNumber(step.duration_s, 0)} s`;
+  }
+  if (step.type === "signal" || step.type === "notice") {
+    return `Wait signal ${step.signal || "manual"}: ${step.message || "Continue when ready"}`;
+  }
+  return formatText(step.type);
+}
+
+function renderRecipeSteps() {
+  const list = el("recipeSteps");
+  list.replaceChildren();
+  if (!state.recipeSteps.length) {
+    const item = document.createElement("li");
+    item.className = "muted";
+    item.textContent = "No recipe steps.";
+    list.appendChild(item);
+    updateRecipeControlState();
+    return;
+  }
+  state.recipeSteps.forEach((step, index) => {
+    const item = document.createElement("li");
+    const label = document.createElement("span");
+    label.textContent = recipeStepSummary(step);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ghost";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => {
+      state.recipeSteps.splice(index, 1);
+      renderRecipeSteps();
+    });
+    item.append(label, remove);
+    list.appendChild(item);
+  });
+  updateRecipeControlState();
+}
+
+function syncRecipeStepInputs() {
+  const type = el("recipeStepType").value;
+  document.querySelectorAll(".recipe-temperature-input")
+    .forEach((node) => node.classList.toggle("hidden", !["ramp_temperature", "set_temperature_target"].includes(type)));
+  document.querySelectorAll(".recipe-temperature-ramp-input")
+    .forEach((node) => node.classList.toggle("hidden", type !== "ramp_temperature"));
+  document.querySelectorAll(".recipe-field-input")
+    .forEach((node) => node.classList.toggle("hidden", type !== "ramp_field"));
+  document.querySelectorAll(".recipe-field-rate-input")
+    .forEach((node) => node.classList.toggle("hidden", !["ramp_field", "ramp_to_zero"].includes(type)));
+  document.querySelectorAll(".recipe-ramp-wait-input")
+    .forEach((node) => node.classList.toggle("hidden", !["ramp_temperature", "ramp_field", "ramp_to_zero"].includes(type)));
+  document.querySelectorAll(".recipe-wait-input")
+    .forEach((node) => node.classList.toggle("hidden", type !== "wait"));
+  document.querySelectorAll(".recipe-signal-input")
+    .forEach((node) => node.classList.toggle("hidden", type !== "signal"));
+}
+
+function updateRecipeControlState(status = null) {
+  const readOnly = Boolean(state.config && state.config.read_only);
+  const activeStatus = status || (el("recipeStatus") ? el("recipeStatus").textContent : "idle");
+  const running = ["running", "waiting_signal"].includes(activeStatus);
+  const waitingNotice = activeStatus === "waiting_signal";
+  const startButton = el("startRecipeButton");
+  const ackButton = el("ackRecipeButton");
+  const abortButton = el("abortRecipeButton");
+  if (startButton) {
+    startButton.disabled = readOnly || running || !state.recipeSteps.length;
+  }
+  if (ackButton) {
+    ackButton.disabled = readOnly || !waitingNotice;
+  }
+  if (abortButton) {
+    abortButton.disabled = readOnly || !running;
+  }
+}
+
 function bindCommands() {
   el("temperatureForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -706,6 +876,50 @@ function bindCommands() {
     event.currentTarget.value = state.customPlotMinutes;
     renderCharts();
   });
+  bindRecipes();
+}
+
+function bindRecipes() {
+  syncRecipeStepInputs();
+  renderRecipeSteps();
+  el("recipeStepType").addEventListener("change", syncRecipeStepInputs);
+  el("addRecipeStepButton").addEventListener("click", () => {
+    state.recipeSteps.push(currentRecipeStepFromForm());
+    renderRecipeSteps();
+  });
+  el("clearRecipeButton").addEventListener("click", () => {
+    state.recipeSteps = [];
+    renderRecipeSteps();
+  });
+  el("recipeForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = new FormData(event.currentTarget).get("name") || "Recipe";
+    await runRecipeCommand(() => postJson("/recipes/start", {
+      name,
+      steps: state.recipeSteps,
+    }), "Recipe start");
+  });
+  el("ackRecipeButton").addEventListener("click", () => {
+    runRecipeCommand(() => postJson("/recipes/acknowledge"), "Recipe continue");
+  });
+  el("abortRecipeButton").addEventListener("click", () => {
+    runRecipeCommand(() => postJson("/recipes/abort"), "Recipe abort");
+  });
+}
+
+async function runRecipeCommand(action, label) {
+  const message = el("recipeMessage");
+  message.className = "message";
+  message.textContent = `${label}...`;
+  try {
+    await action();
+    message.textContent = `${label} accepted`;
+    addEvent(`${label} accepted`);
+  } catch (error) {
+    message.className = "message error";
+    message.textContent = error.message;
+    addEvent(`${label} failed`);
+  }
 }
 
 function bindTabs() {

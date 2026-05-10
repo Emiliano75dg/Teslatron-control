@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import contextlib
+import copy
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
+from time import time
 from typing import Any, Callable
 
 from .backends import CryostatBackend, create_backend, list_visa_resources
@@ -24,6 +27,9 @@ class CryostatService:
         self._hardware_lock = asyncio.Lock()
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
         self._task: asyncio.Task[None] | None = None
+        self._recipe_task: asyncio.Task[None] | None = None
+        self._recipe_signal_events: dict[str, asyncio.Event] = {}
+        self._recipe_status: dict[str, Any] = self._empty_recipe_status()
         self._stop_event = asyncio.Event()
         self._last_log = 0.0
 
@@ -37,6 +43,7 @@ class CryostatService:
             self._task = asyncio.create_task(self._run(), name="cryostat-service")
 
     async def stop(self) -> None:
+        await self.abort_recipe()
         self._stop_event.set()
         if self._task is not None:
             await self._task
@@ -47,7 +54,7 @@ class CryostatService:
     async def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1)
         self._subscribers.add(queue)
-        await self._publish_to(queue, self._state.to_dict())
+        await self._publish_to(queue, self.state_snapshot())
         return queue
 
     def unsubscribe(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
@@ -180,9 +187,76 @@ class CryostatService:
     async def poll_once(self) -> CryostatState:
         async with self._hardware_lock:
             self._state = await self._run_blocking(self._read_state_safely)
-        data = self._state.to_dict()
+        data = self.state_snapshot()
         await self._publish_and_log(data)
         return self._state
+
+    def state_snapshot(self) -> dict[str, Any]:
+        data = self._state.to_dict()
+        data["recipe"] = copy.deepcopy(self._recipe_status)
+        return data
+
+    def recipe_status(self) -> dict[str, Any]:
+        return copy.deepcopy(self._recipe_status)
+
+    async def start_recipe(self, recipe: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_writable()
+        if self._recipe_task is not None and not self._recipe_task.done():
+            raise ValueError("A recipe is already running")
+        steps = self._validate_recipe(recipe)
+        self._recipe_signal_events = {}
+        self._recipe_status = {
+            "status": "running",
+            "name": str(recipe.get("name") or "Recipe"),
+            "steps": steps,
+            "current_step_index": None,
+            "current_step": None,
+            "message": "Recipe started",
+            "started_at": time(),
+            "finished_at": None,
+            "error": None,
+        }
+        await self._publish(self.state_snapshot())
+        self._recipe_task = asyncio.create_task(
+            self._run_recipe(steps),
+            name="cryostat-recipe",
+        )
+        return self.recipe_status()
+
+    async def abort_recipe(self) -> dict[str, Any]:
+        task = self._recipe_task
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        return self.recipe_status()
+
+    async def acknowledge_recipe(self) -> dict[str, Any]:
+        if self._recipe_status.get("status") != "waiting_signal":
+            raise ValueError("Recipe is not waiting for a signal")
+        signal = str(self._recipe_status.get("waiting_signal") or "manual")
+        self._set_recipe_signal(signal)
+        self._recipe_status["last_signal"] = {
+            "signal": signal,
+            "message": "Manual confirmation",
+            "received_at": time(),
+        }
+        return self.recipe_status()
+
+    async def signal_recipe(
+        self,
+        signal: str,
+        message: str | None = None,
+    ) -> dict[str, Any]:
+        normalized = self._normalize_recipe_signal(signal)
+        self._set_recipe_signal(normalized)
+        self._recipe_status["last_signal"] = {
+            "signal": normalized,
+            "message": message,
+            "received_at": time(),
+        }
+        await self._publish(self.state_snapshot())
+        return self.recipe_status()
 
     async def _run_hardware_transaction(
         self,
@@ -191,9 +265,280 @@ class CryostatService:
         async with self._hardware_lock:
             await self._run_blocking(operation)
             self._state = await self._run_blocking(self._read_state_safely)
-        data = self._state.to_dict()
+        data = self.state_snapshot()
         await self._publish_and_log(data)
         return data
+
+    async def _run_recipe(self, steps: list[dict[str, Any]]) -> None:
+        try:
+            for index, step in enumerate(steps):
+                self._recipe_status.update(
+                    {
+                        "status": "running",
+                        "current_step_index": index,
+                        "current_step": copy.deepcopy(step),
+                        "message": self._recipe_step_message(step),
+                        "error": None,
+                        "waiting_signal": None,
+                    }
+                )
+                await self._publish(self.state_snapshot())
+                await self._execute_recipe_step(step)
+            self._recipe_status.update(
+                {
+                    "status": "completed",
+                    "current_step_index": None,
+                    "current_step": None,
+                    "message": "Recipe completed",
+                    "finished_at": time(),
+                    "waiting_signal": None,
+                }
+            )
+        except asyncio.CancelledError:
+            self._recipe_status.update(
+                {
+                    "status": "aborted",
+                    "message": "Recipe aborted",
+                    "finished_at": time(),
+                    "waiting_signal": None,
+                }
+            )
+            raise
+        except Exception as exc:
+            self._recipe_status.update(
+                {
+                    "status": "error",
+                    "message": str(exc),
+                    "error": str(exc),
+                    "finished_at": time(),
+                    "waiting_signal": None,
+                }
+            )
+        finally:
+            await self._publish(self.state_snapshot())
+
+    async def _execute_recipe_step(self, step: dict[str, Any]) -> None:
+        step_type = step["type"]
+        if step_type == "ramp_temperature":
+            await self.ramp_temperature(
+                step["target_K"],
+                step["rate_K_per_min"],
+                loop=step.get("loop", "both"),
+            )
+            await self._wait_for_temperature_step(step)
+        elif step_type == "set_temperature_target":
+            await self.set_temperature_target(
+                step["target_K"],
+                loop=step.get("loop", "both"),
+            )
+        elif step_type == "ramp_field":
+            await self.ramp_field(step["target_T"], step["rate_T_per_min"])
+            await self._wait_for_field_step(step["target_T"], step)
+        elif step_type == "ramp_to_zero":
+            await self.ramp_to_zero(step["rate_T_per_min"])
+            await self._wait_for_field_step(0.0, step)
+        elif step_type == "wait":
+            await asyncio.sleep(step["duration_s"])
+        elif step_type == "signal":
+            signal = step["signal"]
+            self._recipe_status.update(
+                {
+                    "status": "waiting_signal",
+                    "waiting_signal": signal,
+                    "message": step.get("message") or f"Waiting for signal {signal}",
+                }
+            )
+            await self._publish(self.state_snapshot())
+            event = self._recipe_signal_events.setdefault(signal, asyncio.Event())
+            await event.wait()
+            event.clear()
+
+    def _validate_recipe(self, recipe: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_steps = recipe.get("steps")
+        if not isinstance(raw_steps, list) or not raw_steps:
+            raise ValueError("Recipe must contain at least one step")
+        if len(raw_steps) > 100:
+            raise ValueError("Recipe cannot contain more than 100 steps")
+        return [self._validate_recipe_step(step) for step in raw_steps]
+
+    def _validate_recipe_step(self, step: Any) -> dict[str, Any]:
+        if not isinstance(step, dict):
+            raise ValueError("Recipe steps must be objects")
+        step_type = step.get("type")
+        if step_type == "ramp_temperature":
+            loop = str(step.get("loop", "both"))
+            target_K = _required_float(step, "target_K")
+            rate_K_per_min = _required_float(step, "rate_K_per_min")
+            self._validate_temperature_loop(loop)
+            self._ensure_temperature_supported(loop)
+            self._validate_temperature(target_K, rate_K_per_min)
+            if loop == "both":
+                self._validate_temperature(target_K * 0.9, rate_K_per_min)
+            return {
+                "type": step_type,
+                "loop": loop,
+                "target_K": target_K,
+                "rate_K_per_min": rate_K_per_min,
+                "tolerance_K": _optional_float(step, "tolerance_K", 0.05),
+                "stable_s": _optional_float(step, "stable_s", 0.0),
+                "timeout_s": _optional_float(step, "timeout_s", 24 * 60 * 60),
+            }
+        if step_type == "set_temperature_target":
+            loop = str(step.get("loop", "both"))
+            target_K = _required_float(step, "target_K")
+            self._validate_temperature_loop(loop)
+            self._ensure_temperature_supported(loop)
+            self._validate_temperature_target(target_K)
+            if loop == "both":
+                self._validate_temperature_target(target_K * 0.9)
+            return {"type": step_type, "loop": loop, "target_K": target_K}
+        if step_type == "ramp_field":
+            self._ensure_field_supported()
+            target_T = _required_float(step, "target_T")
+            rate_T_per_min = _required_float(step, "rate_T_per_min")
+            self._validate_field(target_T, rate_T_per_min)
+            return {
+                "type": step_type,
+                "target_T": target_T,
+                "rate_T_per_min": rate_T_per_min,
+                "tolerance_T": _optional_float(step, "tolerance_T", 0.005),
+                "stable_s": _optional_float(step, "stable_s", 0.0),
+                "timeout_s": _optional_float(step, "timeout_s", 24 * 60 * 60),
+            }
+        if step_type == "ramp_to_zero":
+            self._ensure_field_supported()
+            rate_T_per_min = _required_float(step, "rate_T_per_min")
+            self._validate_field(0.0, rate_T_per_min)
+            return {
+                "type": step_type,
+                "rate_T_per_min": rate_T_per_min,
+                "tolerance_T": _optional_float(step, "tolerance_T", 0.005),
+                "stable_s": _optional_float(step, "stable_s", 0.0),
+                "timeout_s": _optional_float(step, "timeout_s", 24 * 60 * 60),
+            }
+        if step_type == "wait":
+            duration_s = _required_float(step, "duration_s")
+            if duration_s <= 0 or duration_s > 30 * 24 * 60 * 60:
+                raise ValueError("Wait duration must be between 0 and 2592000 seconds")
+            return {"type": step_type, "duration_s": duration_s}
+        if step_type in {"notice", "signal"}:
+            signal = self._normalize_recipe_signal(step.get("signal") or "manual")
+            message = str(step.get("message") or "Continue recipe")
+            if len(message) > 300:
+                raise ValueError("Notice message is too long")
+            return {"type": "signal", "signal": signal, "message": message}
+        raise ValueError(f"Unknown recipe step type: {step_type}")
+
+    def _recipe_step_message(self, step: dict[str, Any]) -> str:
+        step_type = step["type"]
+        if step_type == "ramp_temperature":
+            return f"Ramping {step['loop']} temperature to {step['target_K']} K"
+        if step_type == "set_temperature_target":
+            return f"Setting {step['loop']} temperature target to {step['target_K']} K"
+        if step_type == "ramp_field":
+            return f"Ramping field to {step['target_T']} T"
+        if step_type == "ramp_to_zero":
+            return "Ramping field to zero"
+        if step_type == "wait":
+            return f"Waiting {step['duration_s']} s"
+        if step_type == "signal":
+            return step.get("message") or f"Waiting for signal {step.get('signal')}"
+        return step_type
+
+    async def _wait_for_temperature_step(self, step: dict[str, Any]) -> None:
+        loop = step.get("loop", "both")
+        target_K = step["target_K"]
+        tolerance_K = step["tolerance_K"]
+        targets = {"sample": target_K, "vti": target_K * 0.9} if loop == "both" else {loop: target_K}
+
+        def condition() -> bool:
+            for loop_name, loop_target_K in targets.items():
+                loop_state = getattr(self._state.temperature, loop_name)
+                temperature_K = loop_state.temperature_K
+                if temperature_K is None:
+                    return False
+                if abs(temperature_K - loop_target_K) > tolerance_K:
+                    return False
+            return True
+
+        await self._wait_for_recipe_condition(
+            condition,
+            step["timeout_s"],
+            step["stable_s"],
+            "temperature target",
+        )
+
+    async def _wait_for_field_step(
+        self,
+        target_T: float,
+        step: dict[str, Any],
+    ) -> None:
+        tolerance_T = step["tolerance_T"]
+
+        def condition() -> bool:
+            field = self._state.field
+            if field.B_T is None:
+                return False
+            if abs(field.B_T - target_T) > tolerance_T:
+                return False
+            if field.at_setpoint is False or field.ramping:
+                return False
+            return True
+
+        await self._wait_for_recipe_condition(
+            condition,
+            step["timeout_s"],
+            step["stable_s"],
+            "field target",
+        )
+
+    async def _wait_for_recipe_condition(
+        self,
+        condition: Callable[[], bool],
+        timeout_s: float,
+        stable_s: float,
+        label: str,
+    ) -> None:
+        started_at = monotonic()
+        stable_since: float | None = None
+        while True:
+            await self.poll_once()
+            now = monotonic()
+            if condition():
+                stable_since = stable_since or now
+                if now - stable_since >= stable_s:
+                    return
+            else:
+                stable_since = None
+            if timeout_s > 0 and now - started_at > timeout_s:
+                raise TimeoutError(f"Timed out waiting for {label}")
+            await asyncio.sleep(max(0.25, self.config.poll_interval_s))
+
+    def _normalize_recipe_signal(self, signal: Any) -> str:
+        normalized = str(signal or "").strip()
+        if not normalized:
+            raise ValueError("Recipe signal cannot be empty")
+        if len(normalized) > 80:
+            raise ValueError("Recipe signal is too long")
+        return normalized
+
+    def _set_recipe_signal(self, signal: str) -> None:
+        self._recipe_signal_events.setdefault(signal, asyncio.Event()).set()
+
+    def _empty_recipe_status(self) -> dict[str, Any]:
+        return {
+            "status": "idle",
+            "name": None,
+            "steps": [],
+            "current_step_index": None,
+            "current_step": None,
+            "message": None,
+            "started_at": None,
+            "finished_at": None,
+            "error": None,
+            "waiting_signal": None,
+            "last_signal": None,
+        }
 
     async def _publish_and_log(self, data: dict[str, Any]) -> None:
         await self._publish(data)
@@ -316,7 +661,7 @@ class CryostatService:
             raise ValueError(exc.args[0]) from exc
         async with self._hardware_lock:
             await self._run_blocking(self._replace_backend)
-        await self._publish_and_log(self._state.to_dict())
+        await self._publish_and_log(self.state_snapshot())
         return self.config_snapshot()
 
     def _capabilities(self) -> InsertCapabilitiesConfig:
@@ -454,6 +799,20 @@ def _flatten_state(data: dict[str, Any]) -> dict[str, Any]:
         "safety_level": data["safety"]["level"],
         "safety_message": data["safety"]["message"],
     }
+
+
+def _required_float(data: dict[str, Any], key: str) -> float:
+    try:
+        return float(data[key])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"Recipe step requires a numeric {key}") from exc
+
+
+def _optional_float(data: dict[str, Any], key: str, default: float) -> float:
+    value = data.get(key)
+    if value is None or value == "":
+        return default
+    return _required_float(data, key)
 
 
 def _compatible_log_path(path: Path, fieldnames: list[str]) -> Path:

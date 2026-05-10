@@ -67,6 +67,16 @@ class ApplySampleSensorRequest(BaseModel):
     preset_id: str
 
 
+class RecipeRequest(BaseModel):
+    name: str = "Recipe"
+    steps: list[dict]
+
+
+class RecipeSignalRequest(BaseModel):
+    signal: str
+    message: str | None = None
+
+
 async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
@@ -117,7 +127,27 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
 
     @app.get("/state")
     async def get_state() -> dict:
-        return service.state.to_dict()
+        return service.state_snapshot()
+
+    @app.get("/recipes/status")
+    async def recipe_status() -> dict:
+        return service.recipe_status()
+
+    @app.post("/recipes/start")
+    async def start_recipe(request: RecipeRequest) -> dict:
+        return await service.start_recipe(request.dict())
+
+    @app.post("/recipes/acknowledge")
+    async def acknowledge_recipe() -> dict:
+        return await service.acknowledge_recipe()
+
+    @app.post("/recipes/signal")
+    async def signal_recipe(request: RecipeSignalRequest) -> dict:
+        return await service.signal_recipe(request.signal, request.message)
+
+    @app.post("/recipes/abort")
+    async def abort_recipe() -> dict:
+        return await service.abort_recipe()
 
     @app.get("/diagnostics")
     async def diagnostics() -> dict:

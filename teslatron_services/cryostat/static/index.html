@@ -26,6 +26,7 @@
       <button class="tab-button" type="button" data-tab="ips">IPS</button>
       <button class="tab-button" type="button" data-tab="plots">Plots</button>
       <button class="tab-button" type="button" data-tab="commands">Commands</button>
+      <button class="tab-button" type="button" data-tab="recipes">Recipes</button>
       <button class="tab-button" type="button" data-tab="config">Config</button>
     </nav>
 
@@ -334,6 +335,87 @@
           <button id="abortButton" class="danger" type="button">Abort</button>
         </div>
         <p id="commandMessage" class="message"></p>
+      </section>
+
+      <section class="panel recipe-panel view-section hidden" data-view="recipes">
+        <div class="panel-heading">
+          <h2>Recipes</h2>
+          <span id="recipeStatusBadge" class="badge neutral">Idle</span>
+        </div>
+        <div class="recipe-grid">
+          <form id="recipeForm" class="recipe-builder">
+            <label>Recipe name
+              <input name="name" type="text" value="Cryostat recipe">
+            </label>
+            <div class="recipe-add-row">
+              <label>Step
+                <select id="recipeStepType">
+                  <option value="ramp_temperature">Ramp T</option>
+                  <option value="set_temperature_target">Set T target</option>
+                  <option value="ramp_field">Ramp B</option>
+                  <option value="ramp_to_zero">B to zero</option>
+                  <option value="wait">Timed wait</option>
+                  <option value="signal">Wait signal</option>
+                </select>
+              </label>
+              <label class="recipe-temperature-input">Loop
+                <select id="recipeLoop" name="loop">
+                  <option value="sample">Sample</option>
+                  <option value="vti">VTI</option>
+                  <option value="both">Both, VTI 90%</option>
+                </select>
+              </label>
+              <label class="recipe-temperature-input">Target K
+                <input id="recipeTargetK" type="number" step="0.001" value="4.2">
+              </label>
+              <label class="recipe-temperature-ramp-input">Rate K/min
+                <input id="recipeRateK" type="number" step="0.001" value="1">
+              </label>
+              <label class="recipe-temperature-ramp-input">T tolerance K
+                <input id="recipeToleranceK" type="number" step="0.001" min="0" value="0.05">
+              </label>
+              <label class="recipe-field-input">Target T
+                <input id="recipeTargetT" type="number" step="0.0001" value="0">
+              </label>
+              <label class="recipe-field-rate-input">Rate T/min
+                <input id="recipeRateT" type="number" step="0.0001" value="0.1">
+              </label>
+              <label class="recipe-field-rate-input">B tolerance T
+                <input id="recipeToleranceT" type="number" step="0.0001" min="0" value="0.005">
+              </label>
+              <label class="recipe-ramp-wait-input">Stable s
+                <input id="recipeStableS" type="number" step="1" min="0" value="0">
+              </label>
+              <label class="recipe-wait-input">Seconds
+                <input id="recipeWaitS" type="number" step="1" min="1" value="60">
+              </label>
+              <label class="recipe-signal-input">Signal
+                <input id="recipeSignal" type="text" value="measurement_done">
+              </label>
+              <label class="recipe-signal-input">Message
+                <input id="recipeNotice" type="text" value="Continue when ready">
+              </label>
+              <button id="addRecipeStepButton" class="ghost" type="button">Add</button>
+            </div>
+            <ol id="recipeSteps" class="recipe-steps"></ol>
+            <div class="button-row">
+              <button id="startRecipeButton" type="submit">Start Recipe</button>
+              <button id="clearRecipeButton" class="ghost" type="button">Clear</button>
+              <button id="ackRecipeButton" class="ghost" type="button">Continue</button>
+              <button id="abortRecipeButton" class="danger" type="button">Abort Recipe</button>
+            </div>
+            <p id="recipeMessage" class="message"></p>
+          </form>
+          <article class="recipe-status-card">
+            <h3>Active recipe</h3>
+            <dl class="dense-list">
+              <dt>Name</dt><dd id="recipeName">--</dd>
+              <dt>Status</dt><dd id="recipeStatus">--</dd>
+              <dt>Step</dt><dd id="recipeStep">--</dd>
+              <dt>Message</dt><dd id="recipeMessageDetail">--</dd>
+            </dl>
+          </article>
+        </div>
       </section>
 
       <section class="panel config-panel view-section hidden" data-view="config">

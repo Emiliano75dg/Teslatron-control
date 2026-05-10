@@ -8,6 +8,9 @@ from teslatron_services.cryostat.config import InsertProfileConfig
 from teslatron_services.cryostat.config import MercurySensorSetupConfig
 from teslatron_services.cryostat.config import config_from_mapping
 from teslatron_services.cryostat.service import CryostatService
+from teslatron_services.cryostat.state import FieldState
+from teslatron_services.cryostat.state import TemperatureLoopState
+from teslatron_services.cryostat.state import TemperatureState
 from teslatron_services.cryostat.state import CryostatState
 
 
@@ -19,7 +22,13 @@ class FakeBackend:
         return None
 
     def read_state(self) -> CryostatState:
-        return CryostatState()
+        return CryostatState(
+            temperature=TemperatureState(
+                sample=TemperatureLoopState(temperature_K=295.0, target_K=295.0, stable=True),
+                vti=TemperatureLoopState(temperature_K=265.5, target_K=265.5, stable=True),
+            ),
+            field=FieldState(B_T=0.0, target_T=0.0, at_setpoint=True, stable=True),
+        )
 
     def ramp_temperature(self, target_K: float, rate_K_per_min: float, loop: str = "both") -> None:
         self.calls.append(("ramp_temperature", target_K, rate_K_per_min, loop))
@@ -187,6 +196,101 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(ValueError):
             await service.apply_sample_sensor("other")
+
+    async def test_recipe_runs_steps_in_order(self) -> None:
+        service = self.make_service()
+
+        status = await service.start_recipe(
+            {
+                "name": "test",
+                "steps": [
+                    {
+                        "type": "ramp_temperature",
+                        "loop": "sample",
+                        "target_K": 295.0,
+                        "rate_K_per_min": 0.5,
+                    },
+                    {"type": "wait", "duration_s": 0.01},
+                    {
+                        "type": "ramp_field",
+                        "target_T": 0.0,
+                        "rate_T_per_min": 0.1,
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(status["status"], "running")
+        await service._recipe_task
+
+        self.assertEqual(service.recipe_status()["status"], "completed")
+        self.assertEqual(
+            service.backend.calls,
+            [
+                ("ramp_temperature", 295.0, 0.5, "sample"),
+                ("ramp_field", 0.0, 0.1),
+            ],
+        )
+
+    async def test_recipe_signal_waits_for_external_completion(self) -> None:
+        service = self.make_service()
+
+        await service.start_recipe(
+            {
+                "name": "signal",
+                "steps": [
+                    {
+                        "type": "signal",
+                        "signal": "measurement_done",
+                        "message": "Check contacts",
+                    },
+                    {
+                        "type": "ramp_field",
+                        "target_T": 0.0,
+                        "rate_T_per_min": 0.1,
+                    },
+                ],
+            }
+        )
+
+        for _ in range(20):
+            if service.recipe_status()["status"] == "waiting_signal":
+                break
+            await asyncio.sleep(0.01)
+
+        self.assertEqual(service.recipe_status()["status"], "waiting_signal")
+        self.assertEqual(service.backend.calls, [])
+
+        await service.signal_recipe("measurement_done", "Keithley sweep complete")
+        await service._recipe_task
+
+        self.assertEqual(service.recipe_status()["status"], "completed")
+        self.assertEqual(service.backend.calls, [("ramp_field", 0.0, 0.1)])
+
+    async def test_recipe_rejects_second_active_recipe(self) -> None:
+        service = self.make_service()
+        await service.start_recipe(
+            {
+                "name": "waiting",
+                "steps": [{"type": "notice", "message": "Pause"}],
+            }
+        )
+
+        for _ in range(20):
+            if service.recipe_status()["status"] == "waiting_signal":
+                break
+            await asyncio.sleep(0.01)
+
+        with self.assertRaises(ValueError):
+            await service.start_recipe(
+                {
+                    "name": "second",
+                    "steps": [{"type": "wait", "duration_s": 1}],
+                }
+            )
+
+        await service.abort_recipe()
+        self.assertEqual(service.recipe_status()["status"], "aborted")
 
 
 class CryostatConfigTests(unittest.TestCase):
