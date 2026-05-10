@@ -2,6 +2,7 @@ import asyncio
 import time
 import unittest
 
+from teslatron_services.cryostat.api import create_app
 from teslatron_services.cryostat.config import CryostatServiceConfig
 from teslatron_services.cryostat.config import InsertCapabilitiesConfig
 from teslatron_services.cryostat.config import InsertProfileConfig
@@ -196,7 +197,6 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(ValueError):
             await service.apply_sample_sensor("other")
-
     async def test_recipe_runs_steps_in_order(self) -> None:
         service = self.make_service()
 
@@ -291,6 +291,15 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
 
         await service.abort_recipe()
         self.assertEqual(service.recipe_status()["status"], "aborted")
+
+
+class CryostatApiTests(unittest.TestCase):
+    def test_create_app_loads_repo_config_by_default(self) -> None:
+        app = create_app()
+        endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/config")
+        payload = asyncio.run(endpoint())
+        self.assertEqual(payload["backend"], "mock")
+        self.assertEqual(payload["active_insert"], "fisher_probe")
 
 
 class CryostatConfigTests(unittest.TestCase):

@@ -5,6 +5,8 @@ const state = {
   history: [],
   customPlotMinutes: 120,
   recipeSteps: [],
+  pollingTimer: null,
+  reconnectTimer: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -82,6 +84,14 @@ async function loadConfig() {
   const response = await fetch("/config");
   state.config = await response.json();
   applyConfigSnapshot(state.config);
+}
+
+async function fetchStateSnapshot() {
+  const response = await fetch("/state");
+  if (!response.ok) {
+    throw new Error(`State request failed: ${response.status}`);
+  }
+  return response.json();
 }
 
 function applyConfigSnapshot(config) {
@@ -373,7 +383,7 @@ function renderConfig(config) {
   setText("configReadOnly", formatBool(config.read_only));
   setText("configActiveInsert", formatText(config.active_insert));
   setText("configSampleThermometer", formatText(config.sample_thermometer));
-  setText("configLogPath", formatText(config.log_path));
+  setText("configLogPath", formatText(config.log_dir));
   setText("configPollInterval", formatUnit(config.poll_interval_s, "s", 3));
   setText("configLogInterval", formatUnit(config.log_interval_s, "s", 3));
 
@@ -454,7 +464,6 @@ function renderInsertProfiles(config, capabilities) {
     appendProfileField(details, "VTI signal", profile.itc && profile.itc.vti_signal);
     appendProfileField(details, "VTI loop", profile.itc && profile.itc.vti_loop);
     appendProfileField(details, "Pressure", profile.itc && profile.itc.pressure);
-    appendProfileField(details, "Magnet group", profile.ips && profile.ips.magnet_group);
     card.appendChild(details);
 
     const capabilityList = document.createElement("p");
@@ -600,10 +609,12 @@ function summarizeSensorOptions(sensorOptionIds, presets) {
 }
 
 function connectWebSocket() {
+  stopReconnect();
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
   const socket = new WebSocket(`${protocol}://${window.location.host}/ws/state`);
 
   socket.addEventListener("open", () => {
+    stopPolling();
     setBadge("connectionBadge", "Live", "ok");
     addEvent("Connected");
   });
@@ -613,14 +624,65 @@ function connectWebSocket() {
   });
 
   socket.addEventListener("close", () => {
-    setBadge("connectionBadge", "Offline", "error");
-    addEvent("Disconnected");
-    setTimeout(connectWebSocket, 1500);
+    const wasPolling = state.pollingTimer !== null;
+    setBadge("connectionBadge", "Polling", "warn");
+    if (!wasPolling) {
+      addEvent("Disconnected");
+    }
+    startPolling();
+    scheduleReconnect();
   });
 
   socket.addEventListener("error", () => {
-    setBadge("connectionBadge", "Error", "error");
+    setBadge("connectionBadge", "Polling", "warn");
   });
+}
+
+function pollingIntervalMs() {
+  const pollSeconds = state.config && Number.isFinite(Number(state.config.poll_interval_s))
+    ? Number(state.config.poll_interval_s)
+    : 1;
+  return Math.max(500, Math.round(pollSeconds * 1000));
+}
+
+function stopPolling() {
+  if (state.pollingTimer !== null) {
+    window.clearInterval(state.pollingTimer);
+    state.pollingTimer = null;
+  }
+}
+
+function stopReconnect() {
+  if (state.reconnectTimer !== null) {
+    window.clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = null;
+  }
+}
+
+function scheduleReconnect() {
+  if (state.reconnectTimer !== null) {
+    return;
+  }
+  state.reconnectTimer = window.setTimeout(() => {
+    state.reconnectTimer = null;
+    connectWebSocket();
+  }, 1500);
+}
+
+function startPolling() {
+  if (state.pollingTimer !== null) {
+    return;
+  }
+  const poll = async () => {
+    try {
+      render(await fetchStateSnapshot());
+      setBadge("connectionBadge", "Polling", "warn");
+    } catch (error) {
+      setBadge("connectionBadge", "Offline", "error");
+    }
+  };
+  poll();
+  state.pollingTimer = window.setInterval(poll, pollingIntervalMs());
 }
 
 async function postJson(url, payload = null) {
@@ -958,6 +1020,7 @@ loadConfig()
   .then(() => {
     bindTabs();
     bindCommands();
+    startPolling();
     connectWebSocket();
   })
   .catch((error) => {

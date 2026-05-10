@@ -88,7 +88,7 @@ async def permission_error_handler(
 
 
 def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
-    service = CryostatService(config or load_config())
+    service = CryostatService(config or load_config(_default_config_path()))
     static_dir = Path(__file__).with_name("static")
 
     @asynccontextmanager
@@ -271,6 +271,10 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
             service.unsubscribe(queue)
 
     return app
+
+
+def _default_config_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "config" / "cryostat.json"
 
 
 app = create_app()
