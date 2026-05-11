@@ -12,10 +12,19 @@ with:
 
 ## How to use
 
-Install Python 3, then numpy and pyvisa. For handling and plotting the data afterwards, pandas and matplotlib are useful:
-``` 
-pip install numpy pyvisa pandas matplotlib
+Install the service dependencies:
+
+```bash
+pip install -r requirements-service.txt
+pip install pyvisa
 ```
+
+Optional analysis tools for working with exported data afterwards:
+
+```bash
+pip install numpy pandas matplotlib
+```
+
 For PyVisa to work, you will need to install the [National Instruments VISA library](https://pyvisa.readthedocs.io/en/latest/faq/getting_nivisa.html#faq-getting-nivisa).
 
 ## Lab cryostat service
@@ -78,7 +87,7 @@ config/heliox_control.example.json
 Start it with:
 
 ```bash
-python3 -m teslatron_services --config config/heliox_readonly.example.json --port 8766
+python3 -m teslatron_services --config config/heliox_readonly.example.json --port 8767
 ```
 
 Current Heliox model:
