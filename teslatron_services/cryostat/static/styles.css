@@ -385,17 +385,29 @@ dd {
   font-size: 12px;
 }
 
-.legend span {
+.legend label {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  cursor: pointer;
+}
+
+.legend input {
+  margin: 0;
+  width: 12px;
+  height: 12px;
 }
 
 .legend i {
-  width: 16px;
+  width: 24px;
   height: 3px;
   display: inline-block;
   border-radius: 3px;
+  background: var(--series-color, #cbd5df);
+}
+
+.legend-toggle.disabled {
+  opacity: 0.45;
 }
 
 .sample-line {

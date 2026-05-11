@@ -1,0 +1,30 @@
+{
+  "name": "First recipe",
+  "steps": [
+    {
+      "type": "ramp_field",
+      "target_T": 1.5,
+      "rate_T_per_min": 0.1,
+      "tolerance_T": 0.005,
+      "stable_s": 15.0,
+      "timeout_s": 86400
+    },
+    {
+      "type": "ramp_temperature",
+      "loop": "both",
+      "target_K": 10.0,
+      "rate_K_per_min": 3.0,
+      "tolerance_K": 0.01,
+      "stable_s": 30.0,
+      "timeout_s": 86400
+    },
+    {
+      "type": "ramp_field",
+      "target_T": 0.0,
+      "rate_T_per_min": 0.3,
+      "tolerance_T": 0.005,
+      "stable_s": 30.0,
+      "timeout_s": 86400
+    }
+  ]
+}

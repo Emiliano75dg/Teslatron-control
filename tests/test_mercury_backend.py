@@ -246,8 +246,9 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
         )
         self.assertEqual(backend._field_rate_T_per_min, 0.3)
 
-    def test_read_state_does_not_adjust_field_rate(self) -> None:
+    def test_read_state_does_not_adjust_field_rate_in_read_only_mode(self) -> None:
         backend = self.make_backend()
+        backend.config.read_only = True
 
         def fail_if_called(*args, **kwargs):
             raise AssertionError("read_state must not write field rate")
@@ -255,6 +256,18 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
         backend._maybe_adjust_field_rate = fail_if_called
 
         backend.read_state()
+
+    def test_read_state_adjusts_field_rate_in_writable_mode(self) -> None:
+        backend = self.make_backend()
+        calls = []
+
+        def capture(field_T, field_rate_T_per_min, field_ramping):
+            calls.append((field_T, field_rate_T_per_min, field_ramping))
+
+        backend._maybe_adjust_field_rate = capture
+        backend.read_state()
+
+        self.assertEqual(calls, [(None, None, False)])
 
     def test_apply_sample_sensor_writes_full_sensor_setup(self) -> None:
         backend = self.make_backend()

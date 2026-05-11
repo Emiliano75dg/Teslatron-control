@@ -715,6 +715,8 @@ class MercuryCryostatBackend(CryostatBackend):
             MagnetAction.TO_SET,
             MagnetAction.TO_ZERO,
         }
+        if not self.config.read_only:
+            self._maybe_adjust_field_rate(field_T, field_rate, field_ramping)
         pressure_mode = _pressure_mode_from_loop_state(
             pressure_loop_enabled,
             pressure_target,
@@ -779,7 +781,7 @@ class MercuryCryostatBackend(CryostatBackend):
             field=FieldState(
                 B_T=field_T,
                 target_T=field_target_T,
-                rate_T_per_min=_first_available(field_rate, self._field_rate_T_per_min),
+                rate_T_per_min=_first_available(self._field_rate_T_per_min, field_rate),
                 output_current_A=field_current_A,
                 output_voltage_V=field_voltage_V,
                 magnet_temperature_K=magnet_temperature_K,

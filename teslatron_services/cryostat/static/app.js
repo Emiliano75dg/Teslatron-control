@@ -4,6 +4,7 @@ const state = {
   lastError: null,
   history: [],
   customPlotMinutes: 120,
+  plotSeriesEnabled: {},
   recipeSteps: [],
   savedRecipes: [],
   pollingTimer: null,
@@ -27,6 +28,10 @@ const MAGNETICS_SERIES = [
   { key: "pressure_mbar", label: "Pressure", color: "#ffb000", axis: "right" },
   { key: "needle_percent", label: "Needle", color: "#c15cff", axis: "right" },
 ];
+const PLOT_SERIES_GROUPS = {
+  temperature: TEMPERATURE_SERIES,
+  magnetics: MAGNETICS_SERIES,
+};
 
 function formatNumber(value, digits = 3) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) {
@@ -657,6 +662,51 @@ function connectWebSocket() {
   });
 }
 
+function initializePlotSeriesSelection() {
+  for (const series of Object.values(PLOT_SERIES_GROUPS)) {
+    for (const item of series) {
+      if (!(item.key in state.plotSeriesEnabled)) {
+        state.plotSeriesEnabled[item.key] = true;
+      }
+    }
+  }
+}
+
+function selectedPlotSeries(group) {
+  const definitions = PLOT_SERIES_GROUPS[group] || [];
+  return definitions.filter((item) => state.plotSeriesEnabled[item.key] !== false);
+}
+
+function renderPlotLegendControls() {
+  document.querySelectorAll(".legend[data-series-group]").forEach((container) => {
+    const group = container.dataset.seriesGroup;
+    const definitions = PLOT_SERIES_GROUPS[group] || [];
+    container.replaceChildren();
+    for (const item of definitions) {
+      const label = document.createElement("label");
+      label.className = `legend-toggle${state.plotSeriesEnabled[item.key] === false ? " disabled" : ""}`;
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = state.plotSeriesEnabled[item.key] !== false;
+      checkbox.addEventListener("change", () => {
+        state.plotSeriesEnabled[item.key] = checkbox.checked;
+        renderPlotLegendControls();
+        renderCharts();
+      });
+
+      const swatch = document.createElement("i");
+      swatch.style.setProperty("--series-color", item.color);
+
+      const text = document.createElement("span");
+      text.textContent = item.label;
+
+      label.append(checkbox, swatch, text);
+      container.appendChild(label);
+    }
+  });
+}
+
 function pollingIntervalMs() {
   const pollSeconds = state.config && Number.isFinite(Number(state.config.poll_interval_s))
     ? Number(state.config.poll_interval_s)
@@ -1195,6 +1245,8 @@ loadConfig()
   .then(() => {
     bindTabs();
     bindCommands();
+    initializePlotSeriesSelection();
+    renderPlotLegendControls();
     return loadSavedRecipes();
   })
   .then(() => {
@@ -1207,6 +1259,7 @@ loadConfig()
   });
 
 function renderCharts() {
+  renderPlotLegendControls();
   const recentPoints = historyForWindow(RECENT_PLOT_WINDOW_S);
   const customWindowS = state.customPlotMinutes * 60;
   const customPoints = historyForWindow(customWindowS);
@@ -1222,13 +1275,13 @@ function drawPlotPair(prefix, points) {
   drawTimeSeries(
     el(`${prefix}TemperatureChart`),
     points,
-    TEMPERATURE_SERIES,
+    selectedPlotSeries("temperature"),
     "Temperature (K)",
   );
   drawTimeSeries(
     el(`${prefix}MagneticsChart`),
     points,
-    MAGNETICS_SERIES,
+    selectedPlotSeries("magnetics"),
     "B (T), I (A), V (V)",
     "Pressure (mbar), Needle (%)",
   );
@@ -1287,6 +1340,10 @@ function drawTimeSeries(canvas, points, series, leftUnit, rightUnit = null) {
   };
 
   drawGrid(ctx, plot, width, height, scale);
+  if (!series.length) {
+    drawNoData(ctx, plot, scale, "Select at least one series");
+    return;
+  }
   if (points.length < 2) {
     drawNoData(ctx, plot, scale);
     return;
@@ -1333,11 +1390,11 @@ function drawGrid(ctx, plot, width, height, scale) {
   ctx.fillRect(0, plot.y + plot.h + 1, width, height - plot.y - plot.h);
 }
 
-function drawNoData(ctx, plot, scale) {
+function drawNoData(ctx, plot, scale, message = "Waiting for data") {
   ctx.fillStyle = "#93a2af";
   ctx.font = `${13 * scale}px system-ui, sans-serif`;
   ctx.textAlign = "center";
-  ctx.fillText("Waiting for data", plot.x + plot.w / 2, plot.y + plot.h / 2);
+  ctx.fillText(message, plot.x + plot.w / 2, plot.y + plot.h / 2);
 }
 
 function valueRange(points, series) {
