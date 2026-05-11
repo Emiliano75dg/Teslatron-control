@@ -2,6 +2,12 @@ const state = {
   config: null,
   lastMode: null,
   lastError: null,
+  helioxDetails: null,
+  helioxMetadata: null,
+  helioxDiagnosticsPending: false,
+  helioxDiagnosticsAt: 0,
+  helioxMetadataPending: false,
+  helioxMetadataAt: 0,
   history: [],
   customPlotMinutes: 120,
   plotSeriesEnabled: {},
@@ -248,6 +254,7 @@ function render(data) {
 
   renderLoop("sample", sample);
   renderLoop("vti", vti);
+  renderHelioxDetails(data);
   renderField(field, switchHeater);
   renderPressure(pressure);
   renderRecipeStatus(data.recipe || {});
@@ -317,6 +324,255 @@ function renderLoop(prefix, loop) {
   setText(`${prefix}Pid`, formatPid(loop.pid));
   setText(`${prefix}Mode`, loop.mode);
   setText(`${prefix}State`, loop.ramping ? "Ramping" : loop.stable ? "Stable" : "Tracking");
+}
+
+function renderHelioxDetails(data) {
+  const panel = el("helioxDetailsPanel");
+  if (!panel) {
+    return;
+  }
+  const isHeliox = data.backend === "heliox";
+  panel.classList.toggle("hidden", !isHeliox);
+  if (!isHeliox) {
+    state.helioxDetails = null;
+    state.helioxMetadata = null;
+    return;
+  }
+  maybeRefreshHelioxDiagnostics();
+  const details = state.helioxDetails;
+  const metadata = state.helioxMetadata;
+  const fallbackMode = data.temperature && data.temperature.sample
+    ? data.temperature.sample.heater_mode
+    : null;
+  setText("helioxStatus", details && details.status ? details.status : formatText(fallbackMode));
+  setText("helioxControlPath", formatHelioxControlPath(details, fallbackMode));
+  setText("helioxControlCrossover", formatUnit(metadata && metadata.controlModeCrossoverK, "K", 4));
+  setText(
+    "helioxSampleRegion",
+    formatHelioxSampleRegion(
+      data.temperature && data.temperature.sample ? data.temperature.sample.temperature_K : null,
+      metadata,
+    ),
+  );
+  setText(
+    "helioxOperationHint",
+    formatHelioxOperationHint(
+      data.temperature && data.temperature.sample ? data.temperature.sample.temperature_K : null,
+      metadata,
+    ),
+  );
+  setText("helioxNeedleRefs", formatHelioxNeedleRefs(metadata));
+  setText("helioxSorbTemperature", formatUnit(details && details.sorbTemperature, "K", 4));
+  setText("helioxSorbHeater", formatUnit(details && details.sorbHeaterPercent, "%", 2));
+  setText("helioxSorbStable", formatBool(details && details.sorbStable));
+  setText("helioxPotTemperature", formatUnit(details && details.potTemperature, "K", 4));
+  setText("helioxPotHeater", formatUnit(details && details.potHeaterPercent, "%", 2));
+  setText("helioxPotStable", formatBool(details && details.potStable));
+  setText("helioxRawPotHighTemperature", formatUnit(details && details.rawPotHighTemperature, "K", 4));
+  setText("helioxRawPotLowTemperature", formatUnit(details && details.rawPotLowTemperature, "K", 4));
+  setText("helioxRawVtiTemperature", formatUnit(details && details.rawVtiTemperature, "K", 4));
+  setText("helioxRawSorbTemperature", formatUnit(details && details.rawSorbTemperature, "K", 4));
+}
+
+function maybeRefreshHelioxDiagnostics() {
+  const now = Date.now();
+  if (state.helioxDiagnosticsPending || now - state.helioxDiagnosticsAt < 5000) {
+    return;
+  }
+  state.helioxDiagnosticsPending = true;
+  state.helioxDiagnosticsAt = now;
+  fetchJson("/diagnostics/readings")
+    .then((readings) => {
+      state.helioxDetails = {
+        status: diagnosticToken(readings.heliox_status),
+        potStable: diagnosticBool(readings.heliox_pot_stable),
+        potTemperature: diagnosticFloat(readings.heliox_pot_temperature),
+        potHeaterPercent: diagnosticFloat(readings.heliox_pot_heater_percent),
+        sorbStable: diagnosticBool(readings.heliox_sorb_stable),
+        sorbTemperature: diagnosticFloat(readings.heliox_sorb_temperature),
+        sorbHeaterPercent: diagnosticFloat(readings.heliox_sorb_heater_percent),
+        rawPotHighTemperature: diagnosticFloat(readings.heliox_raw_pot_high_temperature),
+        rawPotLowTemperature: diagnosticFloat(readings.heliox_raw_pot_low_temperature),
+        rawVtiTemperature: diagnosticFloat(readings.heliox_raw_vti_temperature),
+        rawSorbTemperature: diagnosticFloat(readings.heliox_raw_sorb_temperature),
+      };
+    })
+    .catch(() => {
+      state.helioxDetails = null;
+    })
+    .finally(() => {
+      state.helioxDiagnosticsPending = false;
+    });
+  maybeRefreshHelioxMetadata();
+}
+
+function maybeRefreshHelioxMetadata() {
+  const now = Date.now();
+  if (state.helioxMetadataPending || now - state.helioxMetadataAt < 30000) {
+    return;
+  }
+  state.helioxMetadataPending = true;
+  state.helioxMetadataAt = now;
+  fetchJson("/diagnostics")
+    .then((diagnostics) => {
+      const thresholds = diagnostics && diagnostics.heliox_template_thresholds;
+      state.helioxMetadata = thresholds ? {
+        controlModeCrossoverK: thresholds.control_mode_crossover_K,
+        condensedTempK: thresholds.condensed_temp_K,
+        potEmptyK: thresholds.pot_empty_K,
+        he3PotBoiloffK: thresholds.he3_pot_boiloff_K,
+        he3SorbHighTempControlK: thresholds.he3_sorb_high_temp_control_K,
+        he3SorbRegenK: thresholds.he3_sorb_regen_K,
+        needleValveLowTempMbar: thresholds.needle_valve_low_temp_mbar,
+        needleValveRecondenseMbar: thresholds.needle_valve_recondense_mbar,
+        needleValveHighTempMbar: thresholds.needle_valve_high_temp_mbar,
+      } : null;
+    })
+    .catch(() => {
+      state.helioxMetadata = null;
+    })
+    .finally(() => {
+      state.helioxMetadataPending = false;
+    });
+}
+
+function diagnosticResponse(reading) {
+  if (!reading || typeof reading.response !== "string") {
+    return null;
+  }
+  return reading.response;
+}
+
+function diagnosticToken(reading) {
+  const response = diagnosticResponse(reading);
+  if (!response) {
+    return null;
+  }
+  const token = response.split(":").pop();
+  return token ? token.trim() : null;
+}
+
+function diagnosticFloat(reading) {
+  const token = diagnosticToken(reading);
+  if (!token) {
+    return null;
+  }
+  const match = token.match(/[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?/);
+  return match ? Number(match[0]) : null;
+}
+
+function diagnosticBool(reading) {
+  const token = diagnosticToken(reading);
+  if (!token) {
+    return null;
+  }
+  if (token === "ON") {
+    return true;
+  }
+  if (token === "OFF") {
+    return false;
+  }
+  return null;
+}
+
+function formatHelioxControlPath(details, fallbackMode) {
+  if (details) {
+    const sorb = details.sorbHeaterPercent;
+    const pot = details.potHeaterPercent;
+    if (typeof sorb === "number" && typeof pot === "number" && Math.abs(sorb - pot) > 0.1) {
+      return pot > sorb ? "He3 pot heater" : "He3 sorb heater";
+    }
+    if (typeof pot === "number" && pot > 0.1) {
+      return "He3 pot heater";
+    }
+    if (typeof sorb === "number" && sorb > 0.1) {
+      return "He3 sorb heater";
+    }
+  }
+  const status = (details && details.status ? details.status : fallbackMode || "").toUpperCase();
+  if (status.includes("HIGH")) {
+    return "He3 pot heater";
+  }
+  if (status.includes("LOW") || status.includes("REGEN") || status.includes("COOL")) {
+    return "He3 sorb heater";
+  }
+  if (fallbackMode) {
+    return fallbackMode;
+  }
+  return "--";
+}
+
+function formatHelioxSampleRegion(sampleTemperatureK, metadata) {
+  if (sampleTemperatureK === null || sampleTemperatureK === undefined || !metadata) {
+    return "--";
+  }
+  if (
+    metadata.controlModeCrossoverK !== null
+    && metadata.controlModeCrossoverK !== undefined
+  ) {
+    if (sampleTemperatureK < metadata.controlModeCrossoverK) {
+      return "Below crossover";
+    }
+    if (sampleTemperatureK > metadata.controlModeCrossoverK) {
+      return "Above crossover";
+    }
+  }
+  return "Near crossover";
+}
+
+function formatHelioxOperationHint(sampleTemperatureK, metadata) {
+  if (sampleTemperatureK === null || sampleTemperatureK === undefined || !metadata) {
+    return "--";
+  }
+  if (
+    metadata.he3SorbRegenK !== null
+    && metadata.he3SorbRegenK !== undefined
+    && sampleTemperatureK >= metadata.he3SorbRegenK
+  ) {
+    return "Regen range";
+  }
+  if (
+    metadata.he3SorbHighTempControlK !== null
+    && metadata.he3SorbHighTempControlK !== undefined
+    && sampleTemperatureK >= metadata.he3SorbHighTempControlK
+  ) {
+    return "High-temp sorb range";
+  }
+  if (
+    metadata.he3PotBoiloffK !== null
+    && metadata.he3PotBoiloffK !== undefined
+    && sampleTemperatureK >= metadata.he3PotBoiloffK
+  ) {
+    return "Boiloff-sensitive range";
+  }
+  if (
+    metadata.potEmptyK !== null
+    && metadata.potEmptyK !== undefined
+    && sampleTemperatureK <= metadata.potEmptyK
+  ) {
+    return "Near empty-pot threshold";
+  }
+  if (
+    metadata.condensedTempK !== null
+    && metadata.condensedTempK !== undefined
+    && Math.abs(sampleTemperatureK - metadata.condensedTempK) <= 0.1
+  ) {
+    return "Near condensed temperature";
+  }
+  return "Normal operating range";
+}
+
+function formatHelioxNeedleRefs(metadata) {
+  if (!metadata) {
+    return "--";
+  }
+  const lt = formatNumber(metadata.needleValveLowTempMbar, 1);
+  const rc = formatNumber(metadata.needleValveRecondenseMbar, 1);
+  const ht = formatNumber(metadata.needleValveHighTempMbar, 1);
+  if (lt === "--" && rc === "--" && ht === "--") {
+    return "--";
+  }
+  return `LT ${lt} / RCON ${rc} / HT ${ht} mB`;
 }
 
 function formatPid(pid) {

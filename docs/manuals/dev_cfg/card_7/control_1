@@ -1,0 +1,25 @@
+!DB7.T1.loop!
+SetPoint=0.0000K
+SetRate=infK/m
+cutout_signal=None
+d=0.0000
+flow_mode=Manual
+flow_percent=0
+flow_uid=None
+heat_percent=0
+heater_mode=Manual
+heater_uid=DB2.H1
+i=1
+max_temp_action=HOFF
+max_temperature=1000.00K
+min_temperature=0.0000K
+nickname=DB7.loop1
+p=10
+pid_mode=Auto
+pid_table=VT HIGH.pid
+ramp_mode=OFF
+sensor_uid=DB7.T1
+set_point=0.0000K
+sweep_mode=OFF
+sweep_table=/opt/OxfordInstruments/cryosys/sweep_tables/None
+tht_file=cryojetShieldFlow.htt

@@ -298,7 +298,8 @@ class CryostatApiTests(unittest.TestCase):
         app = create_app()
         endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/config")
         payload = asyncio.run(endpoint())
-        self.assertEqual(payload["backend"], "mock")
+        self.assertEqual(payload["backend"], "mercury")
+        self.assertTrue(payload["read_only"])
         self.assertEqual(payload["active_insert"], "fisher_probe")
 
 

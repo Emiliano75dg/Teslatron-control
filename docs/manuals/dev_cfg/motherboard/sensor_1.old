@@ -1,0 +1,12 @@
+!MB1.T1!
+calibration=AB_100_Ext.dat
+control_samples=1
+excitation=Bipolar
+excitation_mag=5.00
+interpolation=Linear
+nickname=MB1_He3_Sorb
+offset=-4.5
+reference_type=Internal
+samples=8
+scale=1.000000
+sensor_type=NTC

@@ -1,0 +1,6 @@
+!MB0.H1!
+nickname=MB0_Sorb_Heat
+resistance=68.00
+type=unknown
+voltage=MB[1][0].H[1].Voltage,MB0.H1.Voltage,Volts,1x,40,0,,
+voltage_limit=14

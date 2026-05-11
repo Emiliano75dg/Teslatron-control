@@ -168,13 +168,12 @@ def config_from_mapping(data: dict[str, Any]) -> CryostatServiceConfig:
     itc = MercuryITCConfig(**cryostat.get("itc", {}))
     ips = MercuryIPSConfig(**cryostat.get("ips", {}))
     safety = SafetyConfig(**cryostat.get("safety", {}))
-    raw_profiles = cryostat.get("insert_profiles", cryostat.get("inserts", {})) or {}
-    raw_sensor_presets = cryostat.get("sample_sensor_presets", cryostat.get("sensor_presets", {})) or {}
+    raw_profiles = cryostat.get("insert_profiles", {}) or {}
+    raw_sensor_presets = cryostat.get("sample_sensor_presets", {}) or {}
     sample_sensor_presets = {
         preset_id: MercurySensorSetupConfig(**(preset_data or {}))
         for preset_id, preset_data in raw_sensor_presets.items()
     }
-    _merge_legacy_profile_sensors(raw_profiles, sample_sensor_presets)
     insert_profiles = {
         profile_id: _insert_profile_from_mapping(
             profile_id,
@@ -287,11 +286,6 @@ def _sensor_option_ids(
     sample_sensor_presets: dict[str, MercurySensorSetupConfig],
 ) -> list[str]:
     raw_options = data.get("sample_sensor_options")
-    if raw_options is None and data.get("sample_sensor"):
-        legacy_sensor = MercurySensorSetupConfig(**(data.get("sample_sensor", {}) or {}))
-        if any(asdict(legacy_sensor).values()):
-            legacy_id = _legacy_sensor_preset_id(data, profile_id)
-            return [legacy_id]
     if raw_options is None:
         return []
     return [str(option_id) for option_id in raw_options]
@@ -305,8 +299,6 @@ def _default_sensor_option_id(
     explicit = data.get("default_sample_sensor")
     if explicit:
         return str(explicit)
-    if data.get("sample_sensor"):
-        return _legacy_sensor_preset_id(data, profile_id)
     options = _sensor_option_ids(profile_id, data, sample_sensor_presets)
     return options[0] if options else None
 
@@ -347,22 +339,3 @@ def _validate_sensor_options(
             f"Insert profile {profile_id!r} has default_sample_sensor {default_sample_sensor!r} "
             "which is not listed in sample_sensor_options"
         )
-
-
-def _merge_legacy_profile_sensors(
-    raw_profiles: dict[str, Any],
-    sample_sensor_presets: dict[str, MercurySensorSetupConfig],
-) -> None:
-    for profile_id, profile_data in raw_profiles.items():
-        raw_sensor = (profile_data or {}).get("sample_sensor")
-        if not raw_sensor:
-            continue
-        sensor = MercurySensorSetupConfig(**raw_sensor)
-        if not any(asdict(sensor).values()):
-            continue
-        preset_id = _legacy_sensor_preset_id(profile_data or {}, profile_id)
-        sample_sensor_presets.setdefault(preset_id, sensor)
-
-
-def _legacy_sensor_preset_id(data: dict[str, Any], profile_id: str = "legacy") -> str:
-    return str(data.get("default_sample_sensor") or f"{profile_id}_sensor")

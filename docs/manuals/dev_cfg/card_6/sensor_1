@@ -1,0 +1,12 @@
+!DB6.T1!
+calibration=X135124 VTI Rig 1.dat
+control_samples=1
+excitation=Bipolar
+excitation_mag=7.00
+interpolation=Linear
+nickname=DB6_He4Pot
+offset=0.000000
+reference_type=Internal
+samples=8
+scale=1.000000
+sensor_type=NTC

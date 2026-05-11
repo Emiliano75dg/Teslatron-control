@@ -1,0 +1,11 @@
+!DB3.P1!
+calibration=Merc_15psi_10V.dat
+control_samples=1
+excitation=10V
+excitation_mag=0
+interpolation=Linear
+nickname=DB3_He4Pres
+offset=-4e-05
+samples=1
+scale=1
+sensor_type=Ratiometric

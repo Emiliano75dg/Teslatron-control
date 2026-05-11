@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 import re
 import socket
 import threading
@@ -17,6 +18,7 @@ from .state import (
     MagnetAction,
     PIDState,
     PressureState,
+    SafetyState,
     SwitchHeaterState,
     SwitchHeaterStatus,
     TemperatureControlMode,
@@ -576,7 +578,453 @@ class MercuryQueryError(RuntimeError):
         }
 
 
+@dataclass(slots=True)
+class _SampleSnapshot:
+    loop_state: TemperatureLoopState
+    safety_state: SafetyState
+
+
+@dataclass(slots=True)
+class _VtiSnapshot:
+    loop_state: TemperatureLoopState
+    pressure_state: PressureState
+
+
+@dataclass(slots=True)
+class _FieldSnapshot:
+    field_state: FieldState
+    switch_heater_state: SwitchHeaterState
+
+
+class _MercurySampleControlStrategy:
+    def __init__(self, backend: "MercuryCryostatBackend"):
+        self.backend = backend
+
+    def read_snapshot(self) -> _SampleSnapshot:
+        backend = self.backend
+        probe_K = backend._read_itc_float(
+            f"READ:DEV:{backend.config.itc.probe_signal}:TEMP:SIG:TEMP?"
+        )
+        probe_target_K = backend._read_itc_float(
+            f"READ:DEV:{backend.config.itc.probe_loop}:TEMP:LOOP:TSET?"
+        )
+        probe_rate = backend._read_itc_float(
+            f"READ:DEV:{backend.config.itc.probe_loop}:TEMP:LOOP:RSET?"
+        )
+        probe_loop_enabled = backend._try_read_itc_bool(
+            f"READ:DEV:{backend.config.itc.probe_loop}:TEMP:LOOP:ENAB?"
+        )
+        probe_ramp_enabled = backend._try_read_itc_bool(
+            f"READ:DEV:{backend.config.itc.probe_loop}:TEMP:LOOP:RENA?"
+        )
+        probe_heater = backend._read_itc_float(
+            f"READ:DEV:{backend.config.itc.probe_loop}:TEMP:LOOP:HSET?"
+        )
+        probe_pid = backend._read_temperature_pid(backend.config.itc.probe_loop)
+        sample_target_reached = _within_tolerance(probe_K, probe_target_K, 0.05)
+        sample_ramping = bool(probe_ramp_enabled) and sample_target_reached is False
+        return _SampleSnapshot(
+            loop_state=TemperatureLoopState(
+                temperature_K=probe_K,
+                target_K=probe_target_K,
+                rate_K_per_min=_first_available(probe_rate, backend._sample_rate_K_per_min),
+                ramp_end_K=probe_target_K,
+                heater_percent=probe_heater,
+                heater_mode=_temperature_heater_mode(
+                    probe_loop_enabled,
+                    probe_ramp_enabled,
+                ),
+                loop_enabled=probe_loop_enabled,
+                ramp_enabled=probe_ramp_enabled,
+                target_reached=sample_target_reached,
+                mode=TemperatureControlMode.RAMP
+                if probe_ramp_enabled
+                else TemperatureControlMode.FIXED_TARGET,
+                pid=probe_pid,
+                stable=sample_target_reached is True,
+                ramping=sample_ramping,
+            ),
+            safety_state=SafetyState(),
+        )
+
+    def ramp_temperature(self, target_K: float, rate_K_per_min: float) -> None:
+        backend = self.backend
+        backend._sample_target_K = target_K
+        backend._sample_rate_K_per_min = rate_K_per_min
+        backend._set_temperature_loop_target(
+            backend.config.itc.probe_loop,
+            target_K,
+            rate_K_per_min=rate_K_per_min,
+            ramp=True,
+        )
+
+    def set_temperature_target(self, target_K: float) -> None:
+        backend = self.backend
+        backend._sample_target_K = target_K
+        backend._set_temperature_loop_target(backend.config.itc.probe_loop, target_K)
+
+    def hold(self) -> None:
+        backend = self.backend
+        probe_K = backend._read_itc_float(
+            f"READ:DEV:{backend.config.itc.probe_signal}:TEMP:SIG:TEMP?"
+        )
+        if probe_K is None:
+            return
+        backend._hold_temperature_loop(backend.config.itc.probe_loop, probe_K)
+
+    def set_fixed_heater(self, heater_percent: float) -> None:
+        backend = self.backend
+        backend._set_temperature_loop_fixed_heater(
+            backend.config.itc.probe_loop,
+            heater_percent,
+        )
+
+    def set_pid(self, p: float, i: float, d: float, auto: bool = False) -> None:
+        backend = self.backend
+        backend._set_temperature_loop_pid(
+            backend.config.itc.probe_loop,
+            p,
+            i,
+            d,
+            auto=auto,
+        )
+
+
+class _GlobalVtiControl:
+    def __init__(self, backend: "MercuryCryostatBackend"):
+        self.backend = backend
+
+    def read_snapshot(self) -> _VtiSnapshot:
+        backend = self.backend
+        vti_K = backend._read_itc_float(
+            f"READ:DEV:{backend.config.itc.vti_signal}:TEMP:SIG:TEMP?"
+        )
+        vti_target_K = backend._read_itc_float(
+            f"READ:DEV:{backend.config.itc.vti_loop}:TEMP:LOOP:TSET?"
+        )
+        vti_rate = backend._read_itc_float(
+            f"READ:DEV:{backend.config.itc.vti_loop}:TEMP:LOOP:RSET?"
+        )
+        vti_loop_enabled = backend._try_read_itc_bool(
+            f"READ:DEV:{backend.config.itc.vti_loop}:TEMP:LOOP:ENAB?"
+        )
+        vti_ramp_enabled = backend._try_read_itc_bool(
+            f"READ:DEV:{backend.config.itc.vti_loop}:TEMP:LOOP:RENA?"
+        )
+        vti_heater = backend._read_itc_float(
+            f"READ:DEV:{backend.config.itc.vti_loop}:TEMP:LOOP:HSET?"
+        )
+        vti_pid = backend._read_temperature_pid(backend.config.itc.vti_loop)
+        pressure = backend._read_itc_float(
+            f"READ:DEV:{backend.config.itc.pressure}:PRES:SIG:PRES?"
+        )
+        needle = backend._read_itc_float(
+            f"READ:DEV:{backend.config.itc.pressure}:PRES:LOOP:FSET?"
+        )
+        pressure_target = backend._read_itc_float(
+            f"READ:DEV:{backend.config.itc.pressure}:PRES:LOOP:PRST?"
+        )
+        pressure_loop_enabled = backend._try_read_itc_bool(
+            f"READ:DEV:{backend.config.itc.pressure}:PRES:LOOP:ENAB?"
+        )
+        vti_target_reached = _within_tolerance(vti_K, vti_target_K, 0.05)
+        vti_ramping = bool(vti_ramp_enabled) and vti_target_reached is False
+        pressure_mode = _pressure_mode_from_loop_state(
+            pressure_loop_enabled,
+            pressure_target,
+            needle,
+        )
+        return _VtiSnapshot(
+            loop_state=TemperatureLoopState(
+                temperature_K=vti_K,
+                target_K=vti_target_K,
+                rate_K_per_min=_first_available(vti_rate, backend._vti_rate_K_per_min),
+                ramp_end_K=vti_target_K,
+                heater_percent=vti_heater,
+                heater_mode=_temperature_heater_mode(
+                    vti_loop_enabled,
+                    vti_ramp_enabled,
+                ),
+                loop_enabled=vti_loop_enabled,
+                ramp_enabled=vti_ramp_enabled,
+                target_reached=vti_target_reached,
+                mode=TemperatureControlMode.RAMP
+                if vti_ramp_enabled
+                else TemperatureControlMode.FIXED_TARGET,
+                pid=vti_pid,
+                stable=vti_target_reached is True,
+                ramping=vti_ramping,
+            ),
+            pressure_state=PressureState(
+                mbar=pressure,
+                target_mbar=pressure_target,
+                needle_valve_percent=needle,
+                mode=pressure_mode,
+            ),
+        )
+
+    def ramp_temperature(self, target_K: float, rate_K_per_min: float) -> None:
+        backend = self.backend
+        backend._vti_target_K = target_K
+        backend._vti_rate_K_per_min = rate_K_per_min
+        backend._set_temperature_loop_target(
+            backend.config.itc.vti_loop,
+            target_K,
+            rate_K_per_min=rate_K_per_min,
+            ramp=True,
+        )
+
+    def set_temperature_target(self, target_K: float) -> None:
+        backend = self.backend
+        backend._vti_target_K = target_K
+        backend._set_temperature_loop_target(backend.config.itc.vti_loop, target_K)
+
+    def hold(self) -> None:
+        backend = self.backend
+        vti_K = backend._read_itc_float(
+            f"READ:DEV:{backend.config.itc.vti_signal}:TEMP:SIG:TEMP?"
+        )
+        if vti_K is None:
+            return
+        backend._hold_temperature_loop(backend.config.itc.vti_loop, vti_K)
+
+    def set_needle(self, needle_valve_percent: float) -> None:
+        backend = self.backend
+        backend.itc.set(f"SET:DEV:{backend.config.itc.pressure}:PRES:LOOP:ENAB:OFF")
+        backend.itc.set(
+            f"SET:DEV:{backend.config.itc.pressure}:PRES:LOOP:FSET:{needle_valve_percent:.9g}"
+        )
+
+    def set_pressure(self, pressure_mbar: float) -> None:
+        backend = self.backend
+        backend.itc.set(f"SET:DEV:{backend.config.itc.pressure}:PRES:LOOP:ENAB:ON")
+        backend.itc.set(
+            f"SET:DEV:{backend.config.itc.pressure}:PRES:LOOP:PRST:{pressure_mbar:.9g}"
+        )
+
+    def set_fixed_heater(self, heater_percent: float) -> None:
+        backend = self.backend
+        backend._set_temperature_loop_fixed_heater(
+            backend.config.itc.vti_loop,
+            heater_percent,
+        )
+
+    def set_pid(self, p: float, i: float, d: float, auto: bool = False) -> None:
+        backend = self.backend
+        backend._set_temperature_loop_pid(
+            backend.config.itc.vti_loop,
+            p,
+            i,
+            d,
+            auto=auto,
+        )
+
+
+class _GlobalFieldControl:
+    def __init__(self, backend: "MercuryCryostatBackend"):
+        self.backend = backend
+
+    def read_snapshot(self) -> _FieldSnapshot:
+        backend = self.backend
+        field_T = backend._read_ips_float(
+            f"READ:DEV:{backend.config.ips.magnet_group}:PSU:SIG:FLD?"
+        )
+        field_current_A = backend._read_ips_float(
+            f"READ:DEV:{backend.config.ips.magnet_group}:PSU:SIG:CURR?"
+        )
+        field_voltage_V = backend._read_ips_float(
+            f"READ:DEV:{backend.config.ips.magnet_group}:PSU:SIG:VOLT?"
+        )
+        field_target_T = backend._read_ips_float(
+            f"READ:DEV:{backend.config.ips.magnet_group}:PSU:SIG:FSET?"
+        )
+        field_rate = backend._read_ips_float(
+            f"READ:DEV:{backend.config.ips.magnet_group}:PSU:SIG:RFLD?"
+        )
+        magnet_action = backend._read_magnet_action()
+        magnet_temperature_K = backend._read_ips_float(
+            f"READ:DEV:{backend.config.ips.magnet_temperature}:TEMP:SIG:TEMP?"
+        )
+        pt1_temperature_K = backend._read_ips_float(
+            f"READ:DEV:{backend.config.ips.pt1_temperature}:TEMP:SIG:TEMP?"
+        )
+        pt2_temperature_K = backend._read_ips_float(
+            f"READ:DEV:{backend.config.ips.pt2_temperature}:TEMP:SIG:TEMP?"
+        )
+        switch_heater_status = backend._read_switch_heater_status()
+        field_at_setpoint = _within_tolerance(field_T, field_target_T, 0.005)
+        field_ramping = field_at_setpoint is False or magnet_action in {
+            MagnetAction.TO_SET,
+            MagnetAction.TO_ZERO,
+        }
+        if not backend.config.read_only:
+            backend._maybe_adjust_field_rate(field_T, field_rate, field_ramping)
+        return _FieldSnapshot(
+            field_state=FieldState(
+                B_T=field_T,
+                target_T=field_target_T,
+                rate_T_per_min=_first_available(backend._field_rate_T_per_min, field_rate),
+                output_current_A=field_current_A,
+                output_voltage_V=field_voltage_V,
+                magnet_temperature_K=magnet_temperature_K,
+                pt1_temperature_K=pt1_temperature_K,
+                pt2_temperature_K=pt2_temperature_K,
+                action=magnet_action,
+                at_setpoint=field_at_setpoint,
+                at_zero=_inside_tolerance(field_T, 0.0, 0.005),
+                clamped=magnet_action == MagnetAction.CLAMP,
+                stable=field_at_setpoint is True,
+                ramping=field_ramping,
+            ),
+            switch_heater_state=backend._switch_heater_state(switch_heater_status),
+        )
+
+    def ramp(self, target_T: float, rate_T_per_min: float) -> None:
+        backend = self.backend
+        backend._ensure_switch_heater_ready_for_ramp()
+        backend._field_target_T = target_T
+        backend._field_requested_rate_T_per_min = rate_T_per_min
+        group = backend.config.ips.magnet_group
+        delay = backend.config.ips.command_delay_s
+        current_field_T = backend._read_ips_float(f"READ:DEV:{group}:PSU:SIG:FLD?")
+        effective_rate_T_per_min = _field_rate_with_low_field_cap(
+            current_field_T,
+            rate_T_per_min,
+        )
+        backend._field_rate_T_per_min = effective_rate_T_per_min
+        backend.ips.set(f"SET:DEV:{group}:PSU:ACTN:HOLD")
+        time.sleep(delay)
+        backend.ips.set(f"SET:DEV:{group}:PSU:SIG:RFST:{effective_rate_T_per_min:.9g}")
+        time.sleep(delay)
+        backend.ips.set(f"SET:DEV:{group}:PSU:SIG:FSET:{target_T:.9g}")
+        time.sleep(delay)
+        backend.ips.set(f"SET:DEV:{group}:PSU:ACTN:RTOS")
+
+    def ramp_to_zero(self, rate_T_per_min: float) -> None:
+        backend = self.backend
+        backend._ensure_switch_heater_ready_for_ramp()
+        backend._field_target_T = 0.0
+        backend._field_requested_rate_T_per_min = rate_T_per_min
+        group = backend.config.ips.magnet_group
+        delay = backend.config.ips.command_delay_s
+        current_field_T = backend._read_ips_float(f"READ:DEV:{group}:PSU:SIG:FLD?")
+        effective_rate_T_per_min = _field_rate_with_low_field_cap(
+            current_field_T,
+            rate_T_per_min,
+        )
+        backend._field_rate_T_per_min = effective_rate_T_per_min
+        backend.ips.set(f"SET:DEV:{group}:PSU:ACTN:HOLD")
+        time.sleep(delay)
+        backend.ips.set(f"SET:DEV:{group}:PSU:SIG:RFST:{effective_rate_T_per_min:.9g}")
+        time.sleep(delay)
+        backend.ips.set(f"SET:DEV:{group}:PSU:ACTN:RTOZ")
+
+    def clamp(self) -> None:
+        backend = self.backend
+        group = backend.config.ips.magnet_group
+        current_A = backend._read_ips_float(f"READ:DEV:{group}:PSU:SIG:CURR?")
+        if current_A is None:
+            raise PermissionError("Clamp blocked: could not read magnet output current")
+        if abs(current_A) >= 1.0:
+            raise PermissionError(
+                f"Clamp blocked: magnet output current is {current_A:.4g} A; "
+                "manual allows clamp only below 1 A"
+            )
+        backend.ips.set(f"SET:DEV:{group}:PSU:ACTN:CLMP")
+        backend._field_target_T = None
+        backend._field_rate_T_per_min = None
+        backend._field_requested_rate_T_per_min = None
+
+    def hold(self) -> None:
+        self.backend.ips.set(
+            f"SET:DEV:{self.backend.config.ips.magnet_group}:PSU:ACTN:HOLD"
+        )
+
+    def set_switch_heater(self, enabled: bool) -> None:
+        backend = self.backend
+        state = "ON" if enabled else "OFF"
+        backend.ips.set(f"SET:DEV:{backend.config.ips.magnet_group}:PSU:SIG:SWHT:{state}")
+        backend._switch_heater_target = (
+            SwitchHeaterStatus.ON if enabled else SwitchHeaterStatus.OFF
+        )
+        backend._switch_heater_changed_at = unix_time()
+
+
+class _HelioxSampleControlStrategy:
+    def __init__(self, backend: "HelioxCryostatBackend"):
+        self.backend = backend
+
+    def read_snapshot(self) -> _SampleSnapshot:
+        backend = self.backend
+        sample_K = backend._try_read_heliox_float("READ:DEV:HelioxX:HEL:SIG:TEMP")
+        sample_target_K = backend._try_read_heliox_float("READ:DEV:HelioxX:HEL:SIG:TSET")
+        heliox_status = backend._try_read_heliox_status()
+        sorb_temperature_K = backend._try_read_heliox_float("READ:DEV:HelioxX:HEL:SIG:SRBT")
+        sorb_heater_percent = backend._try_read_heliox_float("READ:DEV:HelioxX:HEL:SIG:SRBH")
+        sorb_stable = backend._read_heliox_bool("READ:DEV:HelioxX:HEL:SIG:SRBS")
+        pot_stable = backend._read_heliox_bool("READ:DEV:HelioxX:HEL:SIG:H3PS")
+        pot_heater_percent = backend._try_read_heliox_float("READ:DEV:HelioxX:HEL:SIG:H3PH")
+        sample_target_reached = _within_tolerance(sample_K, sample_target_K, 0.05)
+        sample_ramping = sample_target_reached is False
+        control_channel = backend._heliox_control_channel(
+            heliox_status,
+            sorb_heater_percent=sorb_heater_percent,
+            pot_heater_percent=pot_heater_percent,
+        )
+        if control_channel == "POT":
+            sample_stable = (sample_target_reached is True) and (pot_stable is True)
+        else:
+            sample_stable = (sample_target_reached is True) and (sorb_stable is True)
+        return _SampleSnapshot(
+            loop_state=TemperatureLoopState(
+                temperature_K=sample_K,
+                target_K=sample_target_K,
+                rate_K_per_min=backend._sample_requested_rate_K_per_min,
+                ramp_end_K=sample_target_K,
+                heater_percent=(
+                    pot_heater_percent if control_channel == "POT" else sorb_heater_percent
+                ),
+                heater_mode=backend._heliox_heater_mode_label(heliox_status, control_channel),
+                loop_enabled=True,
+                ramp_enabled=sample_ramping,
+                target_reached=sample_target_reached,
+                mode=TemperatureControlMode.FIXED_TARGET,
+                pid=PIDState(mode="HELIOX"),
+                stable=sample_stable,
+                ramping=sample_ramping,
+            ),
+            safety_state=SafetyState(
+                message=(
+                    None
+                    if sorb_temperature_K is None
+                    else f"Heliox sorb {sorb_temperature_K:.4g} K with inferred {control_channel.lower()} control"
+                ),
+            ),
+        )
+
+    def ramp_temperature(self, target_K: float, rate_K_per_min: float) -> None:
+        backend = self.backend
+        backend._sample_requested_rate_K_per_min = rate_K_per_min
+        backend.itc.set(f"SET:DEV:HelioxX:HEL:TSET:{target_K:.9g}")
+        backend._sample_target_K = target_K
+
+    def set_temperature_target(self, target_K: float) -> None:
+        backend = self.backend
+        backend.itc.set(f"SET:DEV:HelioxX:HEL:TSET:{target_K:.9g}")
+        backend._sample_target_K = target_K
+
+    def hold(self) -> None:
+        backend = self.backend
+        sample_K = backend._read_heliox_float("READ:DEV:HelioxX:HEL:SIG:TEMP")
+        if sample_K is None:
+            raise PermissionError("Hold blocked: could not read Heliox temperature")
+        backend.itc.set(f"SET:DEV:HelioxX:HEL:TSET:{sample_K:.9g}")
+        backend._sample_target_K = sample_K
+
+
 class MercuryCryostatBackend(CryostatBackend):
+    BACKEND_NAME = "mercury"
+
     def __init__(self, config: CryostatServiceConfig):
         self.config = config
         self.itc = MercuryResource(
@@ -603,9 +1051,71 @@ class MercuryCryostatBackend(CryostatBackend):
         self._mode = CryostatMode.IDLE
         self._aborted = False
 
+    def _sample_control_component(self) -> _MercurySampleControlStrategy:
+        component = getattr(self, "_sample_control_cache", None)
+        if component is None:
+            component = _MercurySampleControlStrategy(self)
+            self._sample_control_cache = component
+        return component
+
+    def _vti_control_component(self) -> _GlobalVtiControl:
+        component = getattr(self, "_vti_control_cache", None)
+        if component is None:
+            component = _GlobalVtiControl(self)
+            self._vti_control_cache = component
+        return component
+
+    def _field_control_component(self) -> _GlobalFieldControl:
+        component = getattr(self, "_field_control_cache", None)
+        if component is None:
+            component = _GlobalFieldControl(self)
+            self._field_control_cache = component
+        return component
+
     def close(self) -> None:
         self.itc.close()
         self.ips.close()
+
+    def _compose_state(
+        self,
+        sample_snapshot: _SampleSnapshot,
+        vti_snapshot: _VtiSnapshot,
+        field_snapshot: _FieldSnapshot,
+    ) -> CryostatState:
+        temp_ramping = sample_snapshot.loop_state.ramping or vti_snapshot.loop_state.ramping
+        field_ramping = field_snapshot.field_state.ramping
+
+        if self._aborted:
+            mode = CryostatMode.ABORTED
+        elif temp_ramping and field_ramping:
+            mode = CryostatMode.RAMPING_T_AND_B
+        elif temp_ramping:
+            mode = CryostatMode.RAMPING_T
+        elif field_ramping:
+            mode = CryostatMode.RAMPING_B
+        else:
+            mode = self._mode if self._mode == CryostatMode.HOLDING else CryostatMode.IDLE
+
+        return CryostatState(
+            mode=mode,
+            temperature=TemperatureState(
+                sample=sample_snapshot.loop_state,
+                vti=vti_snapshot.loop_state,
+            ),
+            field=field_snapshot.field_state,
+            switch_heater=field_snapshot.switch_heater_state,
+            pressure=vti_snapshot.pressure_state,
+            safety=sample_snapshot.safety_state,
+            backend=self.BACKEND_NAME,
+        )
+
+    def _temperature_targets(self, loop: str, target_K: float) -> dict[str, float]:
+        return _temperature_targets_for_loop(
+            loop,
+            target_K,
+            sample_loop=self.config.itc.probe_loop,
+            vti_loop=self.config.itc.vti_loop,
+        )
 
     def apply_sample_sensor(self, sensor: MercurySensorSetupConfig) -> None:
         sensor_type = sensor.sensor_type.strip()
@@ -627,182 +1137,10 @@ class MercuryCryostatBackend(CryostatBackend):
         )
 
     def read_state(self) -> CryostatState:
-        probe_K = self._read_itc_float(
-            f"READ:DEV:{self.config.itc.probe_signal}:TEMP:SIG:TEMP?"
-        )
-        vti_K = self._read_itc_float(
-            f"READ:DEV:{self.config.itc.vti_signal}:TEMP:SIG:TEMP?"
-        )
-        probe_target_K = self._read_itc_float(
-            f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:TSET?"
-        )
-        vti_target_K = self._read_itc_float(
-            f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:TSET?"
-        )
-        probe_rate = self._read_itc_float(
-            f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:RSET?"
-        )
-        probe_loop_enabled = self._try_read_itc_bool(
-            f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:ENAB?"
-        )
-        probe_ramp_enabled = self._try_read_itc_bool(
-            f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:RENA?"
-        )
-        probe_heater = self._read_itc_float(
-            f"READ:DEV:{self.config.itc.probe_loop}:TEMP:LOOP:HSET?"
-        )
-        probe_pid = self._read_temperature_pid(self.config.itc.probe_loop)
-        vti_heater = self._read_itc_float(
-            f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:HSET?"
-        )
-        vti_pid = self._read_temperature_pid(self.config.itc.vti_loop)
-        pressure = self._read_itc_float(
-            f"READ:DEV:{self.config.itc.pressure}:PRES:SIG:PRES?"
-        )
-        needle = self._read_itc_float(
-            f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:FSET?"
-        )
-        pressure_target = self._read_itc_float(
-            f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:PRST?"
-        )
-        pressure_loop_enabled = self._try_read_itc_bool(
-            f"READ:DEV:{self.config.itc.pressure}:PRES:LOOP:ENAB?"
-        )
-
-        field_T = self._read_ips_float(
-            f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FLD?"
-        )
-        field_current_A = self._read_ips_float(
-            f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:CURR?"
-        )
-        field_voltage_V = self._read_ips_float(
-            f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:VOLT?"
-        )
-        field_target_T = self._read_ips_float(
-            f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:FSET?"
-        )
-        field_rate = self._read_ips_float(
-            f"READ:DEV:{self.config.ips.magnet_group}:PSU:SIG:RFLD?"
-        )
-        magnet_action = self._read_magnet_action()
-        magnet_temperature_K = self._read_ips_float(
-            f"READ:DEV:{self.config.ips.magnet_temperature}:TEMP:SIG:TEMP?"
-        )
-        pt1_temperature_K = self._read_ips_float(
-            f"READ:DEV:{self.config.ips.pt1_temperature}:TEMP:SIG:TEMP?"
-        )
-        pt2_temperature_K = self._read_ips_float(
-            f"READ:DEV:{self.config.ips.pt2_temperature}:TEMP:SIG:TEMP?"
-        )
-        switch_heater_status = self._read_switch_heater_status()
-
-        vti_rate = self._read_itc_float(
-            f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:RSET?"
-        )
-        vti_loop_enabled = self._try_read_itc_bool(
-            f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:ENAB?"
-        )
-        vti_ramp_enabled = self._try_read_itc_bool(
-            f"READ:DEV:{self.config.itc.vti_loop}:TEMP:LOOP:RENA?"
-        )
-        sample_target_reached = _within_tolerance(probe_K, probe_target_K, 0.05)
-        vti_target_reached = _within_tolerance(vti_K, vti_target_K, 0.05)
-        sample_ramping = bool(probe_ramp_enabled) and sample_target_reached is False
-        vti_ramping = bool(vti_ramp_enabled) and vti_target_reached is False
-        temp_ramping = sample_ramping or vti_ramping
-        field_at_setpoint = _within_tolerance(field_T, field_target_T, 0.005)
-        field_ramping = field_at_setpoint is False or magnet_action in {
-            MagnetAction.TO_SET,
-            MagnetAction.TO_ZERO,
-        }
-        if not self.config.read_only:
-            self._maybe_adjust_field_rate(field_T, field_rate, field_ramping)
-        pressure_mode = _pressure_mode_from_loop_state(
-            pressure_loop_enabled,
-            pressure_target,
-            needle,
-        )
-
-        if self._aborted:
-            mode = CryostatMode.ABORTED
-        elif temp_ramping and field_ramping:
-            mode = CryostatMode.RAMPING_T_AND_B
-        elif temp_ramping:
-            mode = CryostatMode.RAMPING_T
-        elif field_ramping:
-            mode = CryostatMode.RAMPING_B
-        else:
-            mode = self._mode if self._mode == CryostatMode.HOLDING else CryostatMode.IDLE
-
-        return CryostatState(
-            mode=mode,
-            temperature=TemperatureState(
-                sample=TemperatureLoopState(
-                    temperature_K=probe_K,
-                    target_K=probe_target_K,
-                    rate_K_per_min=_first_available(probe_rate, self._sample_rate_K_per_min),
-                    ramp_end_K=probe_target_K,
-                    heater_percent=probe_heater,
-                    heater_mode=_temperature_heater_mode(
-                        probe_loop_enabled,
-                        probe_ramp_enabled,
-                    ),
-                    loop_enabled=probe_loop_enabled,
-                    ramp_enabled=probe_ramp_enabled,
-                    target_reached=sample_target_reached,
-                    mode=TemperatureControlMode.RAMP
-                    if probe_ramp_enabled
-                    else TemperatureControlMode.FIXED_TARGET,
-                    pid=probe_pid,
-                    stable=sample_target_reached is True,
-                    ramping=sample_ramping,
-                ),
-                vti=TemperatureLoopState(
-                    temperature_K=vti_K,
-                    target_K=vti_target_K,
-                    rate_K_per_min=_first_available(vti_rate, self._vti_rate_K_per_min),
-                    ramp_end_K=vti_target_K,
-                    heater_percent=vti_heater,
-                    heater_mode=_temperature_heater_mode(
-                        vti_loop_enabled,
-                        vti_ramp_enabled,
-                    ),
-                    loop_enabled=vti_loop_enabled,
-                    ramp_enabled=vti_ramp_enabled,
-                    target_reached=vti_target_reached,
-                    mode=TemperatureControlMode.RAMP
-                    if vti_ramp_enabled
-                    else TemperatureControlMode.FIXED_TARGET,
-                    pid=vti_pid,
-                    stable=vti_target_reached is True,
-                    ramping=vti_ramping,
-                ),
-            ),
-            field=FieldState(
-                B_T=field_T,
-                target_T=field_target_T,
-                rate_T_per_min=_first_available(self._field_rate_T_per_min, field_rate),
-                output_current_A=field_current_A,
-                output_voltage_V=field_voltage_V,
-                magnet_temperature_K=magnet_temperature_K,
-                pt1_temperature_K=pt1_temperature_K,
-                pt2_temperature_K=pt2_temperature_K,
-                action=magnet_action,
-                at_setpoint=field_at_setpoint,
-                at_zero=_inside_tolerance(field_T, 0.0, 0.005),
-                clamped=magnet_action == MagnetAction.CLAMP,
-                stable=field_at_setpoint is True,
-                ramping=field_ramping,
-            ),
-            switch_heater=self._switch_heater_state(switch_heater_status),
-            pressure=PressureState(
-                mbar=pressure,
-                target_mbar=pressure_target,
-                needle_valve_percent=needle,
-                mode=pressure_mode,
-            ),
-            backend="mercury",
-        )
+        sample_snapshot = self._sample_control_component().read_snapshot()
+        vti_snapshot = self._vti_control_component().read_snapshot()
+        field_snapshot = self._field_control_component().read_snapshot()
+        return self._compose_state(sample_snapshot, vti_snapshot, field_snapshot)
 
     def ramp_temperature(
         self,
@@ -811,23 +1149,17 @@ class MercuryCryostatBackend(CryostatBackend):
         loop: str = "both",
     ) -> None:
         self._aborted = False
-        targets = _temperature_targets_for_loop(
-            loop,
-            target_K,
-            sample_loop=self.config.itc.probe_loop,
-            vti_loop=self.config.itc.vti_loop,
-        )
-        if loop in {"sample", "both"}:
-            self._sample_target_K = targets[self.config.itc.probe_loop]
-            self._sample_rate_K_per_min = rate_K_per_min
-        if loop in {"vti", "both"}:
-            self._vti_target_K = targets[self.config.itc.vti_loop]
-            self._vti_rate_K_per_min = rate_K_per_min
-        for mercury_loop, loop_target_K in targets.items():
-            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:RENA:ON")
-            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:RSET:{rate_K_per_min:.9g}")
-            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:TSET:{loop_target_K:.9g}")
-            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:ENAB:ON")
+        targets = self._temperature_targets(loop, target_K)
+        sample_target = targets.get(self.config.itc.probe_loop)
+        if sample_target is not None:
+            self._sample_control_component().ramp_temperature(
+                sample_target, rate_K_per_min
+            )
+        vti_target = targets.get(self.config.itc.vti_loop)
+        if vti_target is not None:
+            self._vti_control_component().ramp_temperature(
+                vti_target, rate_K_per_min
+            )
         self._mode = CryostatMode.RAMPING_T
 
     def set_temperature_target(
@@ -836,102 +1168,34 @@ class MercuryCryostatBackend(CryostatBackend):
         loop: str = "both",
     ) -> None:
         self._aborted = False
-        targets = _temperature_targets_for_loop(
-            loop,
-            target_K,
-            sample_loop=self.config.itc.probe_loop,
-            vti_loop=self.config.itc.vti_loop,
-        )
-        if loop in {"sample", "both"}:
-            self._sample_target_K = targets[self.config.itc.probe_loop]
-        if loop in {"vti", "both"}:
-            self._vti_target_K = targets[self.config.itc.vti_loop]
-        for mercury_loop, loop_target_K in targets.items():
-            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:RENA:OFF")
-            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:TSET:{loop_target_K:.9g}")
-            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:ENAB:ON")
+        targets = self._temperature_targets(loop, target_K)
+        sample_target = targets.get(self.config.itc.probe_loop)
+        if sample_target is not None:
+            self._sample_control_component().set_temperature_target(sample_target)
+        vti_target = targets.get(self.config.itc.vti_loop)
+        if vti_target is not None:
+            self._vti_control_component().set_temperature_target(vti_target)
         self._mode = CryostatMode.HOLDING
 
     def ramp_field(self, target_T: float, rate_T_per_min: float) -> None:
         self._aborted = False
-        self._ensure_switch_heater_ready_for_ramp()
-        self._field_target_T = target_T
-        self._field_requested_rate_T_per_min = rate_T_per_min
-        group = self.config.ips.magnet_group
-        delay = self.config.ips.command_delay_s
-        current_field_T = self._read_ips_float(f"READ:DEV:{group}:PSU:SIG:FLD?")
-        effective_rate_T_per_min = _field_rate_with_low_field_cap(
-            current_field_T,
-            rate_T_per_min,
-        )
-        self._field_rate_T_per_min = effective_rate_T_per_min
-        self.ips.set(f"SET:DEV:{group}:PSU:ACTN:HOLD")
-        time.sleep(delay)
-        self.ips.set(f"SET:DEV:{group}:PSU:SIG:RFST:{effective_rate_T_per_min:.9g}")
-        time.sleep(delay)
-        self.ips.set(f"SET:DEV:{group}:PSU:SIG:FSET:{target_T:.9g}")
-        time.sleep(delay)
-        self.ips.set(f"SET:DEV:{group}:PSU:ACTN:RTOS")
+        self._field_control_component().ramp(target_T, rate_T_per_min)
         self._mode = CryostatMode.RAMPING_B
 
     def ramp_to_zero(self, rate_T_per_min: float) -> None:
         self._aborted = False
-        self._ensure_switch_heater_ready_for_ramp()
-        self._field_target_T = 0.0
-        self._field_requested_rate_T_per_min = rate_T_per_min
-        group = self.config.ips.magnet_group
-        delay = self.config.ips.command_delay_s
-        current_field_T = self._read_ips_float(f"READ:DEV:{group}:PSU:SIG:FLD?")
-        effective_rate_T_per_min = _field_rate_with_low_field_cap(
-            current_field_T,
-            rate_T_per_min,
-        )
-        self._field_rate_T_per_min = effective_rate_T_per_min
-        self.ips.set(f"SET:DEV:{group}:PSU:ACTN:HOLD")
-        time.sleep(delay)
-        self.ips.set(f"SET:DEV:{group}:PSU:SIG:RFST:{effective_rate_T_per_min:.9g}")
-        time.sleep(delay)
-        self.ips.set(f"SET:DEV:{group}:PSU:ACTN:RTOZ")
+        self._field_control_component().ramp_to_zero(rate_T_per_min)
         self._mode = CryostatMode.RAMPING_B
 
     def clamp(self) -> None:
         self._aborted = False
-        group = self.config.ips.magnet_group
-        current_A = self._read_ips_float(f"READ:DEV:{group}:PSU:SIG:CURR?")
-        if current_A is None:
-            raise PermissionError("Clamp blocked: could not read magnet output current")
-        if abs(current_A) >= 1.0:
-            raise PermissionError(
-                f"Clamp blocked: magnet output current is {current_A:.4g} A; "
-                "manual allows clamp only below 1 A"
-            )
-        self.ips.set(f"SET:DEV:{group}:PSU:ACTN:CLMP")
-        self._field_target_T = None
-        self._field_rate_T_per_min = None
-        self._field_requested_rate_T_per_min = None
+        self._field_control_component().clamp()
         self._mode = CryostatMode.HOLDING
 
     def hold(self) -> None:
-        # Optimization: Instead of reading the full state (~20 queries),
-        # query only the current temperatures needed to set the hold targets.
-        probe_K = self._read_itc_float(
-            f"READ:DEV:{self.config.itc.probe_signal}:TEMP:SIG:TEMP?"
-        )
-        vti_K = self._read_itc_float(
-            f"READ:DEV:{self.config.itc.vti_signal}:TEMP:SIG:TEMP?"
-        )
-
-        current_targets = {
-            self.config.itc.probe_loop: probe_K,
-            self.config.itc.vti_loop: vti_K,
-        }
-        for mercury_loop, target_K in current_targets.items():
-            if target_K is None:
-                continue
-            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:RENA:OFF")
-            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:TSET:{target_K:.9g}")
-            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:ENAB:ON")
-        self.ips.set(f"SET:DEV:{self.config.ips.magnet_group}:PSU:ACTN:HOLD")
+        self._sample_control_component().hold()
+        self._vti_control_component().hold()
+        self._field_control_component().hold()
         self._mode = CryostatMode.HOLDING
 
     def abort(self) -> None:
@@ -939,24 +1203,16 @@ class MercuryCryostatBackend(CryostatBackend):
         self._aborted = True
 
     def set_vti_needle(self, needle_valve_percent: float) -> None:
-        # Manual gas-flow control uses a fixed valve opening, so disable
-        # automatic pressure/flow control before writing FSET.
-        self.itc.set(f"SET:DEV:{self.config.itc.pressure}:PRES:LOOP:ENAB:OFF")
-        self.itc.set(
-            f"SET:DEV:{self.config.itc.pressure}:PRES:LOOP:FSET:{needle_valve_percent:.9g}"
-        )
+        self._vti_control_component().set_needle(needle_valve_percent)
 
     def set_vti_pressure(self, pressure_mbar: float) -> None:
-        self.itc.set(f"SET:DEV:{self.config.itc.pressure}:PRES:LOOP:ENAB:ON")
-        self.itc.set(
-            f"SET:DEV:{self.config.itc.pressure}:PRES:LOOP:PRST:{pressure_mbar:.9g}"
-        )
+        self._vti_control_component().set_pressure(pressure_mbar)
 
     def set_temperature_fixed_heater(self, loop: str, heater_percent: float) -> None:
-        for mercury_loop in self._temperature_loop_names(loop):
-            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:RENA:OFF")
-            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:ENAB:OFF")
-            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:HSET:{heater_percent:.9g}")
+        if loop in {"sample", "both"}:
+            self._sample_control_component().set_fixed_heater(heater_percent)
+        if loop in {"vti", "both"}:
+            self._vti_control_component().set_fixed_heater(heater_percent)
         self._mode = CryostatMode.HOLDING
 
     def set_temperature_pid(
@@ -967,22 +1223,13 @@ class MercuryCryostatBackend(CryostatBackend):
         d: float,
         auto: bool = False,
     ) -> None:
-        pid_table = "ON" if auto else "OFF"
-        for mercury_loop in self._temperature_loop_names(loop):
-            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:PIDT:{pid_table}")
-            if not auto:
-                self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:P:{p:.9g}")
-                self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:I:{i:.9g}")
-                self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:D:{d:.9g}")
-            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:ENAB:ON")
+        if loop in {"sample", "both"}:
+            self._sample_control_component().set_pid(p, i, d, auto=auto)
+        if loop in {"vti", "both"}:
+            self._vti_control_component().set_pid(p, i, d, auto=auto)
 
     def set_switch_heater(self, enabled: bool) -> None:
-        state = "ON" if enabled else "OFF"
-        self.ips.set(f"SET:DEV:{self.config.ips.magnet_group}:PSU:SIG:SWHT:{state}")
-        self._switch_heater_target = (
-            SwitchHeaterStatus.ON if enabled else SwitchHeaterStatus.OFF
-        )
-        self._switch_heater_changed_at = unix_time()
+        self._field_control_component().set_switch_heater(enabled)
 
     def diagnostics(self) -> dict:
         return {
@@ -1161,6 +1408,53 @@ class MercuryCryostatBackend(CryostatBackend):
             d=self._try_read_itc_float(f"READ:DEV:{mercury_loop}:TEMP:LOOP:D?"),
         )
 
+    def _set_temperature_loop_target(
+        self,
+        mercury_loop: str,
+        target_K: float,
+        *,
+        rate_K_per_min: float | None = None,
+        ramp: bool = False,
+    ) -> None:
+        if ramp:
+            if rate_K_per_min is None:
+                raise ValueError("rate_K_per_min is required for a temperature ramp")
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:RENA:ON")
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:RSET:{rate_K_per_min:.9g}")
+        else:
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:RENA:OFF")
+        self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:TSET:{target_K:.9g}")
+        self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:ENAB:ON")
+
+    def _hold_temperature_loop(self, mercury_loop: str, measured_K: float) -> None:
+        self._set_temperature_loop_target(mercury_loop, measured_K, ramp=False)
+
+    def _set_temperature_loop_fixed_heater(
+        self,
+        mercury_loop: str,
+        heater_percent: float,
+    ) -> None:
+        self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:RENA:OFF")
+        self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:ENAB:OFF")
+        self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:HSET:{heater_percent:.9g}")
+
+    def _set_temperature_loop_pid(
+        self,
+        mercury_loop: str,
+        p: float,
+        i: float,
+        d: float,
+        *,
+        auto: bool = False,
+    ) -> None:
+        pid_table = "ON" if auto else "OFF"
+        self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:PIDT:{pid_table}")
+        if not auto:
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:P:{p:.9g}")
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:I:{i:.9g}")
+            self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:D:{d:.9g}")
+        self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:ENAB:ON")
+
     def _switch_heater_state(self, status: SwitchHeaterStatus) -> SwitchHeaterState:
         target = (
             self._switch_heater_target
@@ -1226,17 +1520,6 @@ class MercuryCryostatBackend(CryostatBackend):
         )
         self._field_rate_T_per_min = desired_rate_T_per_min
 
-    def _temperature_loop_names(self, loop: str) -> set[str]:
-        match loop:
-            case "sample":
-                return {self.config.itc.probe_loop}
-            case "vti":
-                return {self.config.itc.vti_loop}
-            case "both":
-                return {self.config.itc.probe_loop, self.config.itc.vti_loop}
-            case _:
-                raise ValueError("Temperature loop must be 'sample', 'vti', or 'both'")
-
     def _read_itc_float(self, command: str) -> float | None:
         return _extract_float(self.itc.query(command))
 
@@ -1263,6 +1546,210 @@ class MercuryCryostatBackend(CryostatBackend):
             return self.ips.query(command)
         except MercuryQueryError:
             return None
+
+
+class HelioxCryostatBackend(MercuryCryostatBackend):
+    BACKEND_NAME = "heliox"
+    HELIOX_SORB_SENSOR_UID = "MB1.T1"
+    HELIOX_SORB_HEATER_UID = "MB0.H1"
+    HELIOX_POT_HIGH_SENSOR_UID = "DB7.T1"
+    HELIOX_POT_HEATER_UID = "DB2.H1"
+    HELIOX_VTI_NEEDLE_UID = "DB4.G1"
+    HELIOX_TEMPLATE_THRESHOLDS = {
+        "accept_base_K": 0.2950,
+        "control_mode_crossover_K": 1.6000,
+        "condensed_temp_K": 1.5900,
+        "he3_pot_boiloff_K": 5.0000,
+        "he3_sorb_cold_K": 1.8000,
+        "he3_sorb_high_temp_control_K": 15.0000,
+        "he3_sorb_regen_K": 35.0000,
+        "he3_sorb_outgas_K": 50.0000,
+        "he4_sorb_rapid_cool_K": 18.0000,
+        "needle_valve_close_mbar": 0.1000,
+        "needle_valve_high_temp_mbar": 10.0000,
+        "needle_valve_low_temp_mbar": 5.0000,
+        "needle_valve_recondense_mbar": 6.0000,
+        "pot_empty_K": 2.0000,
+        "rapid_cool_delta_K": 15.0000,
+        "rapid_cool_end_K": 13.0000,
+        "rapid_cool_exit_K": 5.0000,
+        "regen_above_K": 1.5000,
+        "target_tolerance_K": 0.005,
+    }
+
+    def __init__(self, config: CryostatServiceConfig):
+        super().__init__(config)
+        self._sample_requested_rate_K_per_min: float | None = None
+
+    def _sample_control_component(self) -> _HelioxSampleControlStrategy:
+        component = getattr(self, "_sample_control_cache", None)
+        if component is None:
+            component = _HelioxSampleControlStrategy(self)
+            self._sample_control_cache = component
+        return component
+
+    def _temperature_targets(self, loop: str, target_K: float) -> dict[str, float]:
+        self._ensure_supported_temperature_loop(loop)
+        return super()._temperature_targets(loop, target_K)
+
+    def set_temperature_fixed_heater(self, loop: str, heater_percent: float) -> None:
+        if loop != "vti":
+            raise PermissionError("Fixed heater control is available only for the VTI on the Heliox backend")
+        self._vti_control_component().set_fixed_heater(heater_percent)
+        self._mode = CryostatMode.HOLDING
+
+    def set_temperature_pid(
+        self,
+        loop: str,
+        p: float,
+        i: float,
+        d: float,
+        auto: bool = False,
+    ) -> None:
+        if loop != "vti":
+            raise PermissionError("Direct PID tuning is available only for the VTI on the Heliox backend")
+        self._vti_control_component().set_pid(p, i, d, auto=auto)
+
+    def diagnostics(self) -> dict:
+        data = super().diagnostics()
+        data["backend"] = "heliox"
+        data["abstract_device"] = "HelioxX:HEL"
+        data["control_model"] = {
+            "sample_temperature_via_abstract_setpoint": True,
+            "vti_temperature_via_raw_mercury": True,
+            "field_control_via_ips": True,
+            "vti_gas_control_via_raw_mercury": True,
+            "low_temperature_actuator": "He3 sorb heater",
+            "high_temperature_actuator": "He3 pot heater",
+        }
+        data["heliox_template_devices"] = {
+            "sorb_sensor": self.HELIOX_SORB_SENSOR_UID,
+            "sorb_heater": self.HELIOX_SORB_HEATER_UID,
+            "plate_sensor": "DB6.T1",
+            "pot_high_sensor": self.HELIOX_POT_HIGH_SENSOR_UID,
+            "pot_low_sensor": self.config.itc.probe_signal,
+            "plate_heater": "DB1.H1",
+            "pot_heater": self.HELIOX_POT_HEATER_UID,
+            "vti_temperature_sensor": self.config.itc.vti_signal,
+            "vti_pressure": self.config.itc.pressure,
+            "vti_needle_valve": self.HELIOX_VTI_NEEDLE_UID,
+        }
+        data["heliox_raw_mapping"] = {
+            "sample_low_sensor": self.config.itc.probe_signal,
+            "sample_low_loop": self.config.itc.probe_loop,
+            "sample_high_sensor": self.HELIOX_POT_HIGH_SENSOR_UID,
+            "vti_sensor": self.config.itc.vti_signal,
+            "vti_loop": self.config.itc.vti_loop,
+            "pressure_sensor": self.config.itc.pressure,
+            "needle_valve": self.HELIOX_VTI_NEEDLE_UID,
+        }
+        data["heliox_template_thresholds"] = dict(self.HELIOX_TEMPLATE_THRESHOLDS)
+        return data
+
+    def catalog(self) -> dict:
+        data = super().catalog()
+        data["heliox_status"] = self.itc.query("READ:DEV:HelioxX:HEL:SIG:STAT")
+        return data
+
+    def raw_readings(self) -> dict:
+        readings = super().raw_readings()
+        commands = {
+            "heliox_temperature": "READ:DEV:HelioxX:HEL:SIG:TEMP",
+            "heliox_status": "READ:DEV:HelioxX:HEL:SIG:STAT",
+            "heliox_setpoint": "READ:DEV:HelioxX:HEL:SIG:TSET",
+            "heliox_pot_stable": "READ:DEV:HelioxX:HEL:SIG:H3PS",
+            "heliox_pot_temperature": "READ:DEV:HelioxX:HEL:SIG:H3PT",
+            "heliox_pot_heater_percent": "READ:DEV:HelioxX:HEL:SIG:H3PH",
+            "heliox_sorb_stable": "READ:DEV:HelioxX:HEL:SIG:SRBS",
+            "heliox_sorb_temperature": "READ:DEV:HelioxX:HEL:SIG:SRBT",
+            "heliox_sorb_heater_percent": "READ:DEV:HelioxX:HEL:SIG:SRBH",
+            "heliox_raw_sorb_temperature": (
+                f"READ:DEV:{self.HELIOX_SORB_SENSOR_UID}:TEMP:SIG:TEMP?"
+            ),
+            "heliox_raw_pot_high_temperature": (
+                f"READ:DEV:{self.HELIOX_POT_HIGH_SENSOR_UID}:TEMP:SIG:TEMP?"
+            ),
+            "heliox_raw_pot_low_temperature": (
+                f"READ:DEV:{self.config.itc.probe_signal}:TEMP:SIG:TEMP?"
+            ),
+            "heliox_raw_vti_temperature": (
+                f"READ:DEV:{self.config.itc.vti_signal}:TEMP:SIG:TEMP?"
+            ),
+        }
+        readings.update({
+            name: {
+                "command": command,
+                "response": self._diagnostic_response("itc", command),
+            }
+            for name, command in commands.items()
+        })
+        return readings
+
+    def _ensure_supported_temperature_loop(self, loop: str) -> None:
+        if loop not in {"sample", "vti", "both"}:
+            raise PermissionError("Heliox backend supports sample, VTI, or both temperature loops")
+
+    def _read_heliox_float(self, command: str) -> float | None:
+        return _extract_float(self.itc.query(command))
+
+    def _try_read_heliox_float(self, command: str) -> float | None:
+        try:
+            return self._read_heliox_float(command)
+        except MercuryQueryError:
+            return None
+
+    def _read_heliox_status(self) -> str | None:
+        response = self.itc.query("READ:DEV:HelioxX:HEL:SIG:STAT")
+        token = response.rsplit(":", 1)[-1].strip()
+        return token or None
+
+    def _try_read_heliox_status(self) -> str | None:
+        try:
+            return self._read_heliox_status()
+        except MercuryQueryError:
+            return None
+
+    def _read_heliox_bool(self, command: str) -> bool | None:
+        try:
+            response = self.itc.query(command)
+        except MercuryQueryError:
+            return None
+        token = response.rsplit(":", 1)[-1].strip().upper()
+        if token == "ON":
+            return True
+        if token == "OFF":
+            return False
+        return None
+
+    def _heliox_control_channel(
+        self,
+        status: str | None,
+        *,
+        sorb_heater_percent: float | None = None,
+        pot_heater_percent: float | None = None,
+    ) -> str:
+        if (
+            pot_heater_percent is not None
+            and sorb_heater_percent is not None
+            and abs(pot_heater_percent - sorb_heater_percent) > 0.1
+        ):
+            return "POT" if pot_heater_percent > sorb_heater_percent else "SORB"
+        if pot_heater_percent is not None and pot_heater_percent > 0.1:
+            return "POT"
+        if sorb_heater_percent is not None and sorb_heater_percent > 0.1:
+            return "SORB"
+        if not status:
+            return "SORB"
+        normalized = status.upper()
+        if "HIGH" in normalized:
+            return "POT"
+        return "SORB"
+
+    def _heliox_heater_mode_label(self, status: str | None, channel: str) -> str:
+        prefix = "HE3_POT_HEATER" if channel == "POT" else "HE3_SORB_HEATER"
+        if not status:
+            return prefix
+        return f"{prefix}:{status}"
 
 
 def _extract_float(response: str) -> float | None:
@@ -1375,6 +1862,8 @@ def create_backend(config: CryostatServiceConfig) -> CryostatBackend:
         return MockCryostatBackend(config)
     if config.backend == "mercury":
         return MercuryCryostatBackend(config)
+    if config.backend == "heliox":
+        return HelioxCryostatBackend(config)
     raise ValueError(f"Unsupported cryostat backend: {config.backend}")
 
 

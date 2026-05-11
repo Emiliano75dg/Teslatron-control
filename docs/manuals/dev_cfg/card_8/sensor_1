@@ -1,0 +1,12 @@
+!DB8.T1!
+calibration=U12044.dat
+control_samples=1
+excitation=Bipolar
+excitation_mag=2.00
+interpolation=Linear
+nickname=DB8_He3_Pot_Low
+offset=0.000000
+reference_type=Internal
+samples=8
+scale=1.000000
+sensor_type=NTC

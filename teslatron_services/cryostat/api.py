@@ -104,7 +104,7 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
         finally:
             await service.stop()
 
-    app = FastAPI(title="Teslatron Cryostat Service", lifespan=lifespan)
+    app = FastAPI(title="Teslatron Q-MAT Cryostat Service", lifespan=lifespan)
     app.add_exception_handler(ValueError, value_error_handler)
     app.add_exception_handler(PermissionError, permission_error_handler)
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -303,7 +303,7 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
 
 
 def _default_config_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "config" / "cryostat.json"
+    return Path(__file__).resolve().parents[2] / "config" / "cryostat_lab_readonly.json"
 
 
 app = create_app()

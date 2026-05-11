@@ -3,6 +3,8 @@ from unittest import mock
 
 from teslatron_services.cryostat.backends import (
     GasControlMode,
+    HelioxCryostatBackend,
+    MagnetAction,
     MercuryCryostatBackend,
     MercuryResource,
     SwitchHeaterStatus,
@@ -330,6 +332,185 @@ class MercuryBackendHelperTests(unittest.TestCase):
         self.assertEqual(_field_rate_with_low_field_cap(0.8, 0.1), 0.1)
         self.assertEqual(_field_rate_with_low_field_cap(1.2, 0.3), 0.3)
         self.assertEqual(_field_rate_with_low_field_cap(None, 0.3), 0.15)
+
+
+class HelioxBackendBehaviorTests(unittest.TestCase):
+    def make_backend(self) -> HelioxCryostatBackend:
+        backend = HelioxCryostatBackend.__new__(HelioxCryostatBackend)
+        backend.config = CryostatServiceConfig(backend="heliox")
+        backend.config.ips.command_delay_s = 0.0
+        backend.config.itc.probe_signal = "DB8.T1"
+        backend.config.itc.probe_loop = "DB8.T1"
+        backend.config.itc.vti_signal = "DB6.T1"
+        backend.config.itc.vti_loop = "DB6.T1"
+        backend.config.itc.pressure = "DB3.P1"
+        backend.itc = FakeResource()
+        backend.ips = FakeResource()
+        backend._sample_target_K = None
+        backend._sample_requested_rate_K_per_min = None
+        backend._vti_target_K = None
+        backend._vti_rate_K_per_min = None
+        backend._field_target_T = None
+        backend._field_rate_T_per_min = None
+        backend._field_requested_rate_T_per_min = None
+        backend._switch_heater_target = SwitchHeaterStatus.UNKNOWN
+        backend._switch_heater_changed_at = None
+        backend._mode = None
+        backend._aborted = False
+        return backend
+
+    def test_read_state_uses_abstract_heliox_commands(self) -> None:
+        backend = self.make_backend()
+        backend.itc.responses["READ:DEV:HelioxX:HEL:SIG:TEMP"] = (
+            "STAT:DEV:HelioxX:HEL:SIG:TEMP:0.3500K\n"
+        )
+        backend.itc.responses["READ:DEV:HelioxX:HEL:SIG:TSET"] = (
+            "STAT:DEV:HelioxX:HEL:SIG:TSET:0.4000K\n"
+        )
+        backend.itc.responses["READ:DEV:HelioxX:HEL:SIG:STAT"] = (
+            "STAT:DEV:HelioxX:HEL:SIG:STAT:High Temp\n"
+        )
+        backend._try_read_heliox_float = lambda command: {
+            "READ:DEV:HelioxX:HEL:SIG:TEMP": 0.35,
+            "READ:DEV:HelioxX:HEL:SIG:TSET": 0.4,
+            "READ:DEV:HelioxX:HEL:SIG:H3PH": 18.0,
+        }.get(command)
+        backend._read_heliox_bool = lambda command: (
+            True if command == "READ:DEV:HelioxX:HEL:SIG:H3PS" else None
+        )
+        backend._read_itc_float = lambda command: {
+            "READ:DEV:DB6.T1:TEMP:SIG:TEMP?": 1.2,
+            "READ:DEV:DB6.T1:TEMP:LOOP:TSET?": 1.1,
+            "READ:DEV:DB6.T1:TEMP:LOOP:RSET?": 0.5,
+            "READ:DEV:DB6.T1:TEMP:LOOP:HSET?": 20.0,
+            "READ:DEV:DB3.P1:PRES:SIG:PRES?": 5.0,
+            "READ:DEV:DB3.P1:PRES:LOOP:FSET?": 12.0,
+            "READ:DEV:DB3.P1:PRES:LOOP:PRST?": 5.5,
+        }.get(command)
+        backend._try_read_itc_bool = lambda command: {
+            "READ:DEV:DB6.T1:TEMP:LOOP:ENAB?": True,
+            "READ:DEV:DB6.T1:TEMP:LOOP:RENA?": False,
+            "READ:DEV:DB3.P1:PRES:LOOP:ENAB?": True,
+        }.get(command)
+        backend._read_temperature_pid = lambda loop: mock.Mock(mode="AUTO")
+        backend._read_ips_float = lambda command: {
+            "READ:DEV:GRPZ:PSU:SIG:FLD?": 0.25,
+            "READ:DEV:GRPZ:PSU:SIG:CURR?": 2.0,
+            "READ:DEV:GRPZ:PSU:SIG:VOLT?": 0.1,
+            "READ:DEV:GRPZ:PSU:SIG:FSET?": 0.25,
+            "READ:DEV:GRPZ:PSU:SIG:RFLD?": 0.1,
+            "READ:DEV:MB1.T1:TEMP:SIG:TEMP?": 3.5,
+            "READ:DEV:DB8.T1:TEMP:SIG:TEMP?": 40.0,
+            "READ:DEV:DB7.T1:TEMP:SIG:TEMP?": 3.0,
+        }.get(command)
+        backend._read_magnet_action = lambda: MagnetAction.HOLD
+        backend._read_switch_heater_status = lambda: SwitchHeaterStatus.ON
+
+        state = backend.read_state()
+
+        self.assertEqual(state.backend, "heliox")
+        self.assertEqual(state.temperature.sample.temperature_K, 0.35)
+        self.assertEqual(state.temperature.sample.target_K, 0.4)
+        self.assertEqual(state.temperature.sample.heater_percent, 18.0)
+        self.assertEqual(state.pressure.mbar, 5.0)
+        self.assertEqual(state.field.B_T, 0.25)
+
+    def test_set_temperature_target_writes_heliox_abstract_setpoint(self) -> None:
+        backend = self.make_backend()
+
+        backend.set_temperature_target(0.35, loop="sample")
+
+        self.assertEqual(
+            backend.itc.commands,
+            ["SET:DEV:HelioxX:HEL:TSET:0.35"],
+        )
+
+    def test_vti_loop_target_is_supported_via_raw_mercury(self) -> None:
+        backend = self.make_backend()
+
+        backend.set_temperature_target(0.35, loop="vti")
+
+        self.assertEqual(
+            backend.itc.commands,
+            [
+                "SET:DEV:DB6.T1:TEMP:LOOP:RENA:OFF",
+                "SET:DEV:DB6.T1:TEMP:LOOP:TSET:0.35",
+                "SET:DEV:DB6.T1:TEMP:LOOP:ENAB:ON",
+            ],
+        )
+
+    def test_missing_optional_heliox_diagnostics_do_not_break_state(self) -> None:
+        backend = self.make_backend()
+        backend._try_read_heliox_float = lambda command: {
+            "READ:DEV:HelioxX:HEL:SIG:TEMP": 0.35,
+            "READ:DEV:HelioxX:HEL:SIG:TSET": 0.35,
+        }.get(command)
+        backend._try_read_heliox_status = lambda: "Low Temp"
+        backend._read_heliox_bool = lambda command: None
+        backend._read_itc_float = lambda command: {
+            "READ:DEV:DB6.T1:TEMP:SIG:TEMP?": 1.0,
+            "READ:DEV:DB6.T1:TEMP:LOOP:TSET?": 1.0,
+            "READ:DEV:DB6.T1:TEMP:LOOP:RSET?": 0.5,
+            "READ:DEV:DB6.T1:TEMP:LOOP:HSET?": 10.0,
+            "READ:DEV:DB3.P1:PRES:SIG:PRES?": 5.0,
+            "READ:DEV:DB3.P1:PRES:LOOP:FSET?": 11.0,
+            "READ:DEV:DB3.P1:PRES:LOOP:PRST?": 5.0,
+        }.get(command)
+        backend._try_read_itc_bool = lambda command: False
+        backend._read_temperature_pid = lambda loop: mock.Mock(mode="AUTO")
+        backend._read_ips_float = lambda command: {
+            "READ:DEV:GRPZ:PSU:SIG:FLD?": 0.0,
+            "READ:DEV:GRPZ:PSU:SIG:CURR?": 0.0,
+            "READ:DEV:GRPZ:PSU:SIG:VOLT?": 0.0,
+            "READ:DEV:GRPZ:PSU:SIG:FSET?": 0.0,
+            "READ:DEV:GRPZ:PSU:SIG:RFLD?": 0.1,
+            "READ:DEV:MB1.T1:TEMP:SIG:TEMP?": 3.5,
+            "READ:DEV:DB8.T1:TEMP:SIG:TEMP?": 40.0,
+            "READ:DEV:DB7.T1:TEMP:SIG:TEMP?": 3.0,
+        }.get(command)
+        backend._read_magnet_action = lambda: MagnetAction.HOLD
+        backend._read_switch_heater_status = lambda: SwitchHeaterStatus.ON
+
+        state = backend.read_state()
+
+        self.assertEqual(state.temperature.sample.temperature_K, 0.35)
+        self.assertFalse(state.temperature.sample.stable)
+
+    def test_raw_readings_include_confirmed_heliox_raw_sensor_channels(self) -> None:
+        backend = self.make_backend()
+
+        readings = backend.raw_readings()
+
+        self.assertEqual(
+            readings["heliox_raw_sorb_temperature"]["command"],
+            "READ:DEV:MB1.T1:TEMP:SIG:TEMP?",
+        )
+        self.assertEqual(
+            readings["heliox_raw_pot_high_temperature"]["command"],
+            "READ:DEV:DB7.T1:TEMP:SIG:TEMP?",
+        )
+        self.assertEqual(
+            readings["heliox_raw_pot_low_temperature"]["command"],
+            "READ:DEV:DB8.T1:TEMP:SIG:TEMP?",
+        )
+        self.assertEqual(
+            readings["heliox_raw_vti_temperature"]["command"],
+            "READ:DEV:DB6.T1:TEMP:SIG:TEMP?",
+        )
+
+    def test_diagnostics_include_heliox_template_thresholds(self) -> None:
+        backend = self.make_backend()
+
+        diagnostics = backend.diagnostics()
+
+        self.assertEqual(
+            diagnostics["heliox_template_thresholds"]["control_mode_crossover_K"],
+            1.6,
+        )
+        self.assertEqual(
+            diagnostics["heliox_template_thresholds"]["needle_valve_low_temp_mbar"],
+            5.0,
+        )
 
 
 class MercuryResourceSocketTests(unittest.TestCase):
