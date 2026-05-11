@@ -25,7 +25,7 @@ config/cryostat_lab_control.json
 Read-only:
 
 ```bash
-python3 -m teslatron_services --config config/cryostat_lab_readonly.json --port 8766
+python3 -m teslatron_services --config config/cryostat_lab_readonly.json --port 8765
 ```
 
 Control enabled:
@@ -37,7 +37,8 @@ python3 -m teslatron_services --config config/cryostat_lab_control.json --port 8
 Open the GUI:
 
 ```text
-http://127.0.0.1:8766
+http://127.0.0.1:8765   (read-only)
+http://127.0.0.1:8766   (control)
 ```
 
 ## 3. First live checks

@@ -2,8 +2,7 @@
 
 This is the first service-oriented layer for the Teslatron controller used on
 the Q-MAT lab instrument, within CNR-SPIN and the Department of Physics
-"E. Pancini" of the University of Naples Federico II. The original
-notebook/script API is intentionally left unchanged.
+"E. Pancini" of the University of Naples Federico II.
 
 ## Roles
 
@@ -52,18 +51,30 @@ opening iTC/iPS directly.
 
 ## Current MVP
 
-The current implementation has two cryostat backends:
+The current implementation has three cryostat backends:
 
 - `mock`: simulates the cryostat without hardware
 - `mercury`: opens the configured iTC/iPS VISA resources and sends Mercury
   commands based on the current service configuration
-- `read_only`: when true, state and diagnostics are available but command
-  endpoints that would send `SET` commands are blocked
+- `heliox`: uses the abstract `HelioxX:HEL` interface for sample control while
+  keeping VTI/gas access on the Mercury iTC side and field control on the
+  system-global Mercury iPS
+
+The same backend can be run in two operating modes:
+
+- `read_only=true`: state and diagnostics are available, but command endpoints
+  that would send `SET` commands are blocked
+- `read_only=false`: command endpoints are enabled
+
+The service currently:
 
 - polls environmental state every second
 - logs environmental state every 20 seconds by default
 - exposes the latest state at `GET /state`
 - exposes the active configuration at `GET /config`
+- supports insert/profile changes at `POST /config/activate-insert`
+- supports sample sensor preset changes at `POST /config/apply-sample-sensor`
+- exposes recipe state and persistence endpoints under `/recipes*`
 - exposes hardware diagnostics at:
   - `GET /diagnostics`
   - `GET /diagnostics/resources`
@@ -73,10 +84,13 @@ The current implementation has two cryostat backends:
 - streams state updates at `WS /ws/state`
 - accepts basic commands:
   - `POST /commands/ramp-temperature`
-  - `POST /commands/temperature/sample/ramp`
-  - `POST /commands/temperature/vti/ramp`
+  - `POST /commands/temperature/{loop}/ramp`
+  - `POST /commands/temperature/{loop}/target`
+  - `POST /commands/temperature/{loop}/fixed-heater`
+  - `POST /commands/temperature/{loop}/pid`
   - `POST /commands/ramp-field`
   - `POST /commands/ramp-to-zero`
+  - `POST /commands/clamp`
   - `POST /commands/hold`
   - `POST /commands/abort`
   - `POST /commands/vti/gas/set-needle`
@@ -91,7 +105,7 @@ Install service dependencies:
 pip install -r requirements-service.txt
 ```
 
-Start the mock cryostat service:
+Start the lab read-only service:
 
 ```bash
 python3 -m teslatron_services --config config/cryostat_lab_readonly.json --port 8765
@@ -103,20 +117,33 @@ Then open:
 http://127.0.0.1:8765/state
 ```
 
-## Example commands
-
-Ramp the field to 3 T in mock mode:
+For live command tests, start the control service:
 
 ```bash
-curl -X POST http://127.0.0.1:8765/commands/ramp-field \
+python3 -m teslatron_services --config config/cryostat_lab_control.json --port 8766
+```
+
+For Heliox read-only checks, prefer a separate port so it does not collide with
+the Mercury control session:
+
+```bash
+python3 -m teslatron_services --config config/heliox_readonly.example.json --port 8767
+```
+
+## Example commands
+
+Ramp the field to 3 T:
+
+```bash
+curl -X POST http://127.0.0.1:8766/commands/ramp-field \
   -H 'Content-Type: application/json' \
   -d '{"target_T": 3.0, "rate_T_per_min": 0.3}'
 ```
 
-Ramp the temperature to 5 K in mock mode:
+Ramp the temperature to 5 K:
 
 ```bash
-curl -X POST http://127.0.0.1:8765/commands/ramp-temperature \
+curl -X POST http://127.0.0.1:8766/commands/ramp-temperature \
   -H 'Content-Type: application/json' \
   -d '{"target_K": 5.0, "rate_K_per_min": 1.0}'
 ```
@@ -124,7 +151,7 @@ curl -X POST http://127.0.0.1:8765/commands/ramp-temperature \
 Ramp only the sample loop:
 
 ```bash
-curl -X POST http://127.0.0.1:8765/commands/temperature/sample/ramp \
+curl -X POST http://127.0.0.1:8766/commands/temperature/sample/ramp \
   -H 'Content-Type: application/json' \
   -d '{"target_K": 5.0, "rate_K_per_min": 1.0}'
 ```
@@ -132,7 +159,7 @@ curl -X POST http://127.0.0.1:8765/commands/temperature/sample/ramp \
 Ramp only the VTI loop:
 
 ```bash
-curl -X POST http://127.0.0.1:8765/commands/temperature/vti/ramp \
+curl -X POST http://127.0.0.1:8766/commands/temperature/vti/ramp \
   -H 'Content-Type: application/json' \
   -d '{"target_K": 5.0, "rate_K_per_min": 1.0}'
 ```
@@ -140,7 +167,7 @@ curl -X POST http://127.0.0.1:8765/commands/temperature/vti/ramp \
 Set VTI needle valve opening directly:
 
 ```bash
-curl -X POST http://127.0.0.1:8765/commands/vti/gas/set-needle \
+curl -X POST http://127.0.0.1:8766/commands/vti/gas/set-needle \
   -H 'Content-Type: application/json' \
   -d '{"needle_valve_percent": 15.0}'
 ```
@@ -148,7 +175,7 @@ curl -X POST http://127.0.0.1:8765/commands/vti/gas/set-needle \
 Set VTI pressure target:
 
 ```bash
-curl -X POST http://127.0.0.1:8765/commands/vti/gas/set-pressure \
+curl -X POST http://127.0.0.1:8766/commands/vti/gas/set-pressure \
   -H 'Content-Type: application/json' \
   -d '{"pressure_mbar": 10.0}'
 ```
@@ -156,7 +183,7 @@ curl -X POST http://127.0.0.1:8765/commands/vti/gas/set-pressure \
 Ramp the field back to zero:
 
 ```bash
-curl -X POST http://127.0.0.1:8765/commands/ramp-to-zero \
+curl -X POST http://127.0.0.1:8766/commands/ramp-to-zero \
   -H 'Content-Type: application/json' \
   -d '{"rate_T_per_min": 0.3}'
 ```
@@ -164,7 +191,7 @@ curl -X POST http://127.0.0.1:8765/commands/ramp-to-zero \
 Turn the persistent switch heater on:
 
 ```bash
-curl -X POST http://127.0.0.1:8765/commands/ips/switch-heater \
+curl -X POST http://127.0.0.1:8766/commands/ips/switch-heater \
   -H 'Content-Type: application/json' \
   -d '{"enabled": true}'
 ```
@@ -188,15 +215,15 @@ The configured Mercury modules are:
 ```json
 {
   "itc": {
-    "address": "ASRL7::INSTR",
+    "address": "TCPIP0::172.31.109.115::7020::SOCKET",
     "probe_signal": "DB8.T1",
     "probe_loop": "DB8.T1",
-    "vti_signal": "DB6.T1",
-    "vti_loop": "DB6.T1",
+    "vti_signal": "MB1.T1",
+    "vti_loop": "MB1.T1",
     "pressure": "DB5.P1"
   },
   "ips": {
-    "address": "ASRL8::INSTR",
+    "address": "TCPIP0::172.31.109.116::7020::SOCKET",
     "magnet_group": "GRPZ",
     "magnet_temperature": "MB1.T1",
     "pt1_temperature": "DB8.T1",
@@ -207,8 +234,9 @@ The configured Mercury modules are:
 }
 ```
 
-Keep `backend` as `mock` until the real iTC/iPS are connected and ready.
-Keep `read_only` as `true` for the first hardware checks. In that mode,
+Use `backend=mock` for offline development and demos without hardware.
+Use `backend=heliox` for the Heliox abstract sample-control model.
+Keep `read_only=true` for the first hardware checks. In that mode,
 `/state` and `/diagnostics/*` can read the instruments, while ramp/hold/abort
 commands return HTTP 403 instead of sending `SET` commands.
 
