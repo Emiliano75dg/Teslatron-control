@@ -77,6 +77,10 @@ class RecipeSignalRequest(BaseModel):
     message: str | None = None
 
 
+class RecipeRenameRequest(BaseModel):
+    new_name: str
+
+
 async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
@@ -133,9 +137,34 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
     async def recipe_status() -> dict:
         return service.recipe_status()
 
+    @app.get("/recipes")
+    async def saved_recipes() -> dict:
+        return {"recipes": service.list_saved_recipes()}
+
+    @app.get("/recipes/{recipe_id}")
+    async def load_recipe(recipe_id: str) -> dict:
+        return service.load_saved_recipe(recipe_id)
+
+    @app.delete("/recipes/{recipe_id}")
+    async def delete_recipe(recipe_id: str) -> dict:
+        await service.delete_saved_recipe(recipe_id)
+        return {"deleted": recipe_id}
+
+    @app.post("/recipes/{recipe_id}/rename")
+    async def rename_recipe(recipe_id: str, request: RecipeRenameRequest) -> dict:
+        return await service.rename_saved_recipe(recipe_id, request.new_name)
+
+    @app.post("/recipes/{recipe_id}/duplicate")
+    async def duplicate_recipe(recipe_id: str, request: RecipeRenameRequest) -> dict:
+        return await service.duplicate_saved_recipe(recipe_id, request.new_name)
+
     @app.post("/recipes/start")
     async def start_recipe(request: RecipeRequest) -> dict:
         return await service.start_recipe(request.dict())
+
+    @app.post("/recipes/save")
+    async def save_recipe(request: RecipeRequest) -> dict:
+        return await service.save_recipe(request.dict())
 
     @app.post("/recipes/acknowledge")
     async def acknowledge_recipe() -> dict:

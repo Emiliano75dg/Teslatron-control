@@ -4,6 +4,8 @@ import asyncio
 import csv
 import contextlib
 import copy
+import json
+import re
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
@@ -199,15 +201,81 @@ class CryostatService:
     def recipe_status(self) -> dict[str, Any]:
         return copy.deepcopy(self._recipe_status)
 
+    def list_saved_recipes(self) -> list[dict[str, Any]]:
+        recipes = []
+        for path in sorted(self._recipe_dir().glob("*.json")):
+            with contextlib.suppress(ValueError, json.JSONDecodeError, OSError):
+                recipe = self._load_saved_recipe_file(path)
+                recipes.append(self._saved_recipe_summary(path, recipe))
+        recipes.sort(key=lambda item: item["name"].lower())
+        return recipes
+
+    def load_saved_recipe(self, recipe_id: str) -> dict[str, Any]:
+        path = self._recipe_file_path(recipe_id)
+        recipe = self._load_saved_recipe_file(path)
+        return {
+            "id": path.stem,
+            "name": recipe["name"],
+            "steps": recipe["steps"],
+        }
+
+    async def save_recipe(self, recipe: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_writable()
+        normalized = self._normalized_recipe_definition(recipe)
+        path = self._recipe_output_path(normalized["name"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(normalized, indent=2) + "\n")
+        return self._saved_recipe_summary(path, normalized)
+
+    async def delete_saved_recipe(self, recipe_id: str) -> None:
+        self._ensure_writable()
+        path = self._recipe_file_path(recipe_id)
+        path.unlink()
+
+    async def rename_saved_recipe(self, recipe_id: str, new_name: str) -> dict[str, Any]:
+        self._ensure_writable()
+        source = self._recipe_file_path(recipe_id)
+        recipe = self._load_saved_recipe_file(source)
+        normalized = self._normalized_recipe_definition(
+            {
+                "name": new_name,
+                "steps": recipe["steps"],
+            }
+        )
+        target = self._recipe_output_path(normalized["name"])
+        if target != source and target.exists():
+            raise ValueError(f"A saved recipe named {normalized['name']!r} already exists")
+        source.rename(target)
+        target.write_text(json.dumps(normalized, indent=2) + "\n")
+        return self._saved_recipe_summary(target, normalized)
+
+    async def duplicate_saved_recipe(self, recipe_id: str, new_name: str) -> dict[str, Any]:
+        self._ensure_writable()
+        source = self._recipe_file_path(recipe_id)
+        recipe = self._load_saved_recipe_file(source)
+        normalized = self._normalized_recipe_definition(
+            {
+                "name": new_name,
+                "steps": recipe["steps"],
+            }
+        )
+        target = self._recipe_output_path(normalized["name"])
+        if target.exists():
+            raise ValueError(f"A saved recipe named {normalized['name']!r} already exists")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(normalized, indent=2) + "\n")
+        return self._saved_recipe_summary(target, normalized)
+
     async def start_recipe(self, recipe: dict[str, Any]) -> dict[str, Any]:
         self._ensure_writable()
         if self._recipe_task is not None and not self._recipe_task.done():
             raise ValueError("A recipe is already running")
-        steps = self._validate_recipe(recipe)
+        normalized = self._normalized_recipe_definition(recipe)
+        steps = normalized["steps"]
         self._recipe_signal_events = {}
         self._recipe_status = {
             "status": "running",
-            "name": str(recipe.get("name") or "Recipe"),
+            "name": normalized["name"],
             "steps": steps,
             "current_step_index": None,
             "current_step": None,
@@ -540,6 +608,45 @@ class CryostatService:
             "last_signal": None,
         }
 
+    def _recipe_dir(self) -> Path:
+        return Path(self.config.recipe_dir)
+
+    def _recipe_file_path(self, recipe_id: str) -> Path:
+        normalized_id = _recipe_slug(recipe_id)
+        path = self._recipe_dir() / f"{normalized_id}.json"
+        if not path.exists():
+            raise ValueError(f"Unknown saved recipe: {recipe_id}")
+        return path
+
+    def _recipe_output_path(self, recipe_name: str) -> Path:
+        return self._recipe_dir() / f"{_recipe_slug(recipe_name)}.json"
+
+    def _load_saved_recipe_file(self, path: Path) -> dict[str, Any]:
+        try:
+            payload = json.loads(path.read_text())
+        except FileNotFoundError as exc:
+            raise ValueError(f"Unknown saved recipe: {path.stem}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"Saved recipe {path.stem!r} is invalid")
+        return self._normalized_recipe_definition(payload)
+
+    def _normalized_recipe_definition(self, recipe: dict[str, Any]) -> dict[str, Any]:
+        name = str(recipe.get("name") or "Recipe").strip() or "Recipe"
+        steps = self._validate_recipe(recipe)
+        return {
+            "name": name,
+            "steps": steps,
+        }
+
+    def _saved_recipe_summary(self, path: Path, recipe: dict[str, Any]) -> dict[str, Any]:
+        updated_at = datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds")
+        return {
+            "id": path.stem,
+            "name": recipe["name"],
+            "step_count": len(recipe["steps"]),
+            "updated_at": updated_at,
+        }
+
     async def _publish_and_log(self, data: dict[str, Any]) -> None:
         await self._publish(data)
         now = monotonic()
@@ -831,3 +938,8 @@ def _csv_header_matches(path: Path, fieldnames: list[str]) -> bool:
         except StopIteration:
             return True
     return header == fieldnames
+
+
+def _recipe_slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
+    return slug[:80] or "recipe"

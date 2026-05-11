@@ -348,6 +348,16 @@
               <input name="name" type="text" value="Cryostat recipe">
             </label>
             <div class="recipe-add-row">
+              <label>Saved recipes
+                <select id="savedRecipeSelect"></select>
+              </label>
+              <button id="loadRecipeButton" class="ghost" type="button">Load</button>
+              <button id="saveRecipeButton" class="ghost" type="button">Save</button>
+              <button id="renameRecipeButton" class="ghost" type="button">Rename</button>
+              <button id="duplicateRecipeButton" class="ghost" type="button">Duplicate</button>
+              <button id="deleteRecipeButton" class="danger" type="button">Delete</button>
+            </div>
+            <div class="recipe-add-row">
               <label>Step
                 <select id="recipeStepType">
                   <option value="ramp_temperature">Ramp T</option>

@@ -1,0 +1,104 @@
+{
+  "cryostat": {
+    "backend": "mercury",
+    "read_only": true,
+    "active_insert": "fisher_probe",
+    "active_sample_sensor": "fisher_cernox",
+    "poll_interval_s": 1.0,
+    "log_interval_s": 20.0,
+    "log_dir": "data",
+    "recipe_dir": "data/recipes",
+    "sample_sensor_presets": {
+      "fisher_cernox": {
+        "sensor_type": "CERNOX",
+        "excitation_type": "CURR",
+        "excitation_magnitude": "10uA",
+        "calibration": "X205007"
+      },
+      "basic_cernox": {
+        "sensor_type": "CERNOX",
+        "excitation_type": "CURR",
+        "excitation_magnitude": "10uA",
+        "calibration": "X213221"
+      }
+    },
+    "insert_profiles": {
+      "fisher_probe": {
+        "name": "Fisher probe",
+        "description": "Default cryostat configuration for the Fisher probe insert.",
+        "sample_thermometer": "",
+        "sample_sensor_options": ["fisher_cernox"],
+        "default_sample_sensor": "fisher_cernox",
+        "capabilities": {
+          "temperature_control": true,
+          "sample_loop": true,
+          "vti_loop": true,
+          "gas_control": true,
+          "pid_control": true,
+          "fixed_heater": true
+        }
+      },
+      "heliox_probe": {
+        "name": "Heliox probe",
+        "description": "Cryostat configuration for the Heliox probe insert.",
+        "sample_thermometer": "",
+        "sample_sensor_options": ["fisher_cernox", "basic_cernox"],
+        "default_sample_sensor": "fisher_cernox",
+        "capabilities": {
+          "temperature_control": true,
+          "sample_loop": true,
+          "vti_loop": true,
+          "gas_control": true,
+          "pid_control": true,
+          "fixed_heater": true
+        }
+      },
+      "basic_probe": {
+        "name": "Basic probe",
+        "description": "Cryostat configuration for the Basic probe insert.",
+        "sample_thermometer": "Basic probe thermometer",
+        "sample_sensor_options": ["basic_cernox"],
+        "default_sample_sensor": "basic_cernox",
+        "capabilities": {
+          "temperature_control": true,
+          "sample_loop": true,
+          "vti_loop": true,
+          "gas_control": true,
+          "pid_control": true,
+          "fixed_heater": true
+        }
+      }
+    },
+    "itc": {
+      "address": "TCPIP0::172.31.109.115::7020::SOCKET",
+      "timeout_ms": 3000,
+      "read_termination": "\n",
+      "write_termination": "\n",
+      "probe_signal": "DB8.T1",
+      "probe_loop": "DB8.T1",
+      "vti_signal": "MB1.T1",
+      "vti_loop": "MB1.T1",
+      "pressure": "DB5.P1"
+    },
+    "ips": {
+      "address": "TCPIP0::172.31.109.116::7020::SOCKET",
+      "timeout_ms": 3000,
+      "read_termination": "\n",
+      "write_termination": "\n",
+      "magnet_group": "GRPZ",
+      "magnet_temperature": "MB1.T1",
+      "pt1_temperature": "DB8.T1",
+      "pt2_temperature": "DB7.T1",
+      "switch_on_delay_s": 300.0,
+      "switch_off_delay_s": 300.0,
+      "command_delay_s": 0.1
+    },
+    "safety": {
+      "min_temperature_K": 0.0,
+      "max_temperature_K": 350.0,
+      "max_temperature_rate_K_per_min": 5.0,
+      "max_field_T": 12.0,
+      "max_field_rate_T_per_min": 0.5
+    }
+  }
+}

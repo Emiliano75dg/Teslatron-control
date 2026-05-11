@@ -5,6 +5,7 @@ const state = {
   history: [],
   customPlotMinutes: 120,
   recipeSteps: [],
+  savedRecipes: [],
   pollingTimer: null,
   reconnectTimer: null,
 };
@@ -92,6 +93,24 @@ async function fetchStateSnapshot() {
     throw new Error(`State request failed: ${response.status}`);
   }
   return response.json();
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url);
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(text || response.statusText);
+  }
+  return text ? JSON.parse(text) : {};
+}
+
+async function deleteJson(url) {
+  const response = await fetch(url, { method: "DELETE" });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(text || response.statusText);
+  }
+  return text ? JSON.parse(text) : {};
 }
 
 function applyConfigSnapshot(config) {
@@ -748,6 +767,35 @@ function currentRecipeStepFromForm() {
   };
 }
 
+function recipeFormNameInput() {
+  return document.querySelector("#recipeForm input[name='name']");
+}
+
+function applyRecipeDefinition(recipe) {
+  const nameInput = recipeFormNameInput();
+  if (nameInput) {
+    nameInput.value = recipe.name || "Recipe";
+  }
+  state.recipeSteps = Array.isArray(recipe.steps) ? recipe.steps : [];
+  renderRecipeSteps();
+}
+
+function selectedSavedRecipeId() {
+  const select = el("savedRecipeSelect");
+  return select ? select.value : "";
+}
+
+function selectedSavedRecipe() {
+  const recipeId = selectedSavedRecipeId();
+  return state.savedRecipes.find((recipe) => recipe.id === recipeId) || null;
+}
+
+function formatSavedRecipeOption(recipe) {
+  const stepLabel = recipe.step_count === 1 ? "1 step" : `${recipe.step_count} steps`;
+  const updated = recipe.updated_at ? new Date(recipe.updated_at).toLocaleString() : "--";
+  return `${recipe.name} | ${stepLabel} | ${updated}`;
+}
+
 function recipeStepSummary(step) {
   if (step.type === "ramp_temperature") {
     return `Ramp ${step.loop} to ${formatNumber(step.target_K, 3)} K at ${formatNumber(step.rate_K_per_min, 3)} K/min, wait ±${formatNumber(step.tolerance_K, 3)} K`;
@@ -768,6 +816,45 @@ function recipeStepSummary(step) {
     return `Wait signal ${step.signal || "manual"}: ${step.message || "Continue when ready"}`;
   }
   return formatText(step.type);
+}
+
+function renderSavedRecipes() {
+  const select = el("savedRecipeSelect");
+  if (!select) {
+    return;
+  }
+  const previousValue = select.value;
+  select.replaceChildren();
+  if (!state.savedRecipes.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No saved recipes";
+    select.appendChild(option);
+    select.disabled = true;
+    updateRecipeControlState();
+    return;
+  }
+  select.disabled = false;
+  state.savedRecipes.forEach((recipe) => {
+    const option = document.createElement("option");
+    option.value = recipe.id;
+    option.textContent = formatSavedRecipeOption(recipe);
+    select.appendChild(option);
+  });
+  select.value = state.savedRecipes.some((recipe) => recipe.id === previousValue)
+    ? previousValue
+    : state.savedRecipes[0].id;
+  updateRecipeControlState();
+}
+
+async function loadSavedRecipes(selectedRecipeId = null) {
+  const payload = await fetchJson("/recipes");
+  state.savedRecipes = Array.isArray(payload.recipes) ? payload.recipes : [];
+  renderSavedRecipes();
+  if (selectedRecipeId && state.savedRecipes.some((recipe) => recipe.id === selectedRecipeId)) {
+    el("savedRecipeSelect").value = selectedRecipeId;
+    updateRecipeControlState();
+  }
 }
 
 function renderRecipeSteps() {
@@ -822,11 +909,32 @@ function updateRecipeControlState(status = null) {
   const activeStatus = status || (el("recipeStatus") ? el("recipeStatus").textContent : "idle");
   const running = ["running", "waiting_signal"].includes(activeStatus);
   const waitingNotice = activeStatus === "waiting_signal";
+  const hasSavedRecipe = Boolean(selectedSavedRecipeId());
   const startButton = el("startRecipeButton");
+  const saveButton = el("saveRecipeButton");
+  const loadButton = el("loadRecipeButton");
+  const renameButton = el("renameRecipeButton");
+  const duplicateButton = el("duplicateRecipeButton");
+  const deleteButton = el("deleteRecipeButton");
   const ackButton = el("ackRecipeButton");
   const abortButton = el("abortRecipeButton");
   if (startButton) {
     startButton.disabled = readOnly || running || !state.recipeSteps.length;
+  }
+  if (saveButton) {
+    saveButton.disabled = readOnly || !state.recipeSteps.length;
+  }
+  if (loadButton) {
+    loadButton.disabled = !hasSavedRecipe;
+  }
+  if (renameButton) {
+    renameButton.disabled = readOnly || !hasSavedRecipe;
+  }
+  if (duplicateButton) {
+    duplicateButton.disabled = readOnly || !hasSavedRecipe;
+  }
+  if (deleteButton) {
+    deleteButton.disabled = readOnly || !hasSavedRecipe;
   }
   if (ackButton) {
     ackButton.disabled = readOnly || !waitingNotice;
@@ -944,6 +1052,8 @@ function bindCommands() {
 function bindRecipes() {
   syncRecipeStepInputs();
   renderRecipeSteps();
+  renderSavedRecipes();
+  el("savedRecipeSelect").addEventListener("change", () => updateRecipeControlState());
   el("recipeStepType").addEventListener("change", syncRecipeStepInputs);
   el("addRecipeStepButton").addEventListener("click", () => {
     state.recipeSteps.push(currentRecipeStepFromForm());
@@ -960,6 +1070,71 @@ function bindRecipes() {
       name,
       steps: state.recipeSteps,
     }), "Recipe start");
+  });
+  el("saveRecipeButton").addEventListener("click", async () => {
+    const nameInput = recipeFormNameInput();
+    const name = nameInput ? nameInput.value : "Recipe";
+    await runRecipeCommand(async () => {
+      const saved = await postJson("/recipes/save", {
+        name,
+        steps: state.recipeSteps,
+      });
+      await loadSavedRecipes(saved.id);
+      if (saved.id) {
+        el("savedRecipeSelect").value = saved.id;
+      }
+    }, "Recipe save");
+  });
+  el("loadRecipeButton").addEventListener("click", async () => {
+    const recipeId = el("savedRecipeSelect").value;
+    await runRecipeCommand(async () => {
+      const recipe = await fetchJson(`/recipes/${encodeURIComponent(recipeId)}`);
+      applyRecipeDefinition(recipe);
+    }, "Recipe load");
+  });
+  el("renameRecipeButton").addEventListener("click", async () => {
+    const recipe = selectedSavedRecipe();
+    if (!recipe) {
+      return;
+    }
+    const nextName = window.prompt("Rename saved recipe", recipe.name);
+    if (!nextName || nextName === recipe.name) {
+      return;
+    }
+    await runRecipeCommand(async () => {
+      const renamed = await postJson(`/recipes/${encodeURIComponent(recipe.id)}/rename`, {
+        new_name: nextName,
+      });
+      await loadSavedRecipes(renamed.id);
+      applyRecipeDefinition(await fetchJson(`/recipes/${encodeURIComponent(renamed.id)}`));
+    }, "Recipe rename");
+  });
+  el("duplicateRecipeButton").addEventListener("click", async () => {
+    const recipe = selectedSavedRecipe();
+    if (!recipe) {
+      return;
+    }
+    const suggestedName = `${recipe.name} copy`;
+    const nextName = window.prompt("Duplicate saved recipe as", suggestedName);
+    if (!nextName) {
+      return;
+    }
+    await runRecipeCommand(async () => {
+      const duplicated = await postJson(`/recipes/${encodeURIComponent(recipe.id)}/duplicate`, {
+        new_name: nextName,
+      });
+      await loadSavedRecipes(duplicated.id);
+    }, "Recipe duplicate");
+  });
+  el("deleteRecipeButton").addEventListener("click", async () => {
+    const recipe = selectedSavedRecipe();
+    if (!recipe || !window.confirm(`Delete saved recipe "${recipe.name}"?`)) {
+      return;
+    }
+    await runRecipeCommand(async () => {
+      await deleteJson(`/recipes/${encodeURIComponent(recipe.id)}`);
+      await loadSavedRecipes();
+    }, "Recipe delete");
   });
   el("ackRecipeButton").addEventListener("click", () => {
     runRecipeCommand(() => postJson("/recipes/acknowledge"), "Recipe continue");
@@ -1020,6 +1195,9 @@ loadConfig()
   .then(() => {
     bindTabs();
     bindCommands();
+    return loadSavedRecipes();
+  })
+  .then(() => {
     startPolling();
     connectWebSocket();
   })

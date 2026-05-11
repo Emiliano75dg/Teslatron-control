@@ -614,7 +614,7 @@ button.ghost {
 
 .recipe-add-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr)) auto;
+  grid-template-columns: repeat(4, minmax(120px, 1fr)) repeat(3, auto);
   gap: 8px;
   align-items: end;
 }

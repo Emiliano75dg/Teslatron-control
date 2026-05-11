@@ -231,12 +231,36 @@ An Ethernet Mercury example is provided at:
 config/cryostat_ethernet.example.json
 ```
 
+For live lab checks, a ready-to-run read-only config is provided at:
+
+```text
+config/cryostat_lab_readonly.json
+```
+
+For live command sessions, use:
+
+```text
+config/cryostat_lab_control.json
+```
+
 First hardware checks should use read-only endpoints:
 
 ```text
 GET /diagnostics/resources
 GET /diagnostics/catalog
 GET /diagnostics/readings
+```
+
+Start the service with:
+
+```bash
+python3 -m teslatron_services --config config/cryostat_lab_readonly.json --port 8765
+```
+
+The short operational workflow used in the lab is documented in:
+
+```text
+LAB_RUNBOOK.md
 ```
 
 For one-off manual Mercury checks, use `POST /diagnostics/query`. It only
@@ -264,3 +288,12 @@ Alternative TCP/IP VISA strings are collected in:
 ```text
 config/cryostat_tcpip_candidates.json
 ```
+
+## Session ownership note
+
+The Mercury controllers should have a single active client owner during testing. On
+2026-05-11, the iPS at `TCPIP::172.31.109.116::7020::SOCKET` rejected Python read queries
+with `Connection reset by peer` while the LabVIEW VI still held the session open. As soon as
+the VI disconnected, the same Python `READ:` and `*IDN?` queries succeeded. If a controller
+appears reachable but resets immediately, first verify that LabVIEW or another VISA client is
+not still connected.
