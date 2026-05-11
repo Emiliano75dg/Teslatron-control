@@ -1,0 +1,1 @@
+Ho trovato una regressione piccola ma importante: un test documenta che nel percorso both il target VTI deve restare al 90% del sample. Verifico il helper storico e riallineo il refactor a quel contratto.

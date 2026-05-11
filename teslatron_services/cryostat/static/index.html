@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Teslatron Control</title>
+    <title>Teslatron Q-MAT Control</title>
     <link rel="stylesheet" href="/static/styles.css">
   </head>
   <body>
     <header class="topbar">
       <div>
-        <h1>Teslatron Control</h1>
-        <p id="subtitle">Cryostat service</p>
+        <h1>Teslatron Q-MAT Control</h1>
+        <p id="subtitle">Cryostat service for the Q-MAT lab</p>
       </div>
       <div class="status-strip">
         <span id="connectionBadge" class="badge neutral">Connecting</span>
@@ -80,6 +80,27 @@
               <dt>PID</dt><dd id="samplePid">--</dd>
               <dt>Mode</dt><dd id="sampleMode">--</dd>
               <dt>State</dt><dd id="sampleState">--</dd>
+            </dl>
+          </article>
+          <article class="loop-block hidden" id="helioxDetailsPanel">
+            <h3>Heliox internals</h3>
+            <dl>
+              <dt>Status</dt><dd id="helioxStatus">--</dd>
+              <dt>Control path</dt><dd id="helioxControlPath">--</dd>
+              <dt>Control crossover</dt><dd id="helioxControlCrossover">--</dd>
+              <dt>Sample region</dt><dd id="helioxSampleRegion">--</dd>
+              <dt>Operation hint</dt><dd id="helioxOperationHint">--</dd>
+              <dt>Needle refs</dt><dd id="helioxNeedleRefs">--</dd>
+              <dt>He3 sorb T</dt><dd id="helioxSorbTemperature">--</dd>
+              <dt>He3 sorb heater</dt><dd id="helioxSorbHeater">--</dd>
+              <dt>He3 sorb stable</dt><dd id="helioxSorbStable">--</dd>
+              <dt>He3 pot T</dt><dd id="helioxPotTemperature">--</dd>
+              <dt>He3 pot heater</dt><dd id="helioxPotHeater">--</dd>
+              <dt>He3 pot stable</dt><dd id="helioxPotStable">--</dd>
+              <dt>Raw pot high T</dt><dd id="helioxRawPotHighTemperature">--</dd>
+              <dt>Raw pot low T</dt><dd id="helioxRawPotLowTemperature">--</dd>
+              <dt>Raw He4/VTI T</dt><dd id="helioxRawVtiTemperature">--</dd>
+              <dt>Raw sorb T</dt><dd id="helioxRawSorbTemperature">--</dd>
             </dl>
           </article>
           <article class="loop-block" data-capability="vti_loop">

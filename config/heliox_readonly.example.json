@@ -1,0 +1,59 @@
+{
+  "cryostat": {
+    "backend": "heliox",
+    "read_only": true,
+    "active_insert": "heliox_probe",
+    "poll_interval_s": 1.0,
+    "log_interval_s": 20.0,
+    "log_dir": "data",
+    "recipe_dir": "data/recipes",
+    "insert_profiles": {
+      "heliox_probe": {
+        "name": "Heliox probe",
+        "description": "Heliox abstract controller via HelioxX:HEL commands.",
+        "sample_thermometer": "Heliox He-3 pot",
+        "capabilities": {
+          "temperature_control": true,
+          "sample_loop": true,
+          "vti_loop": true,
+          "gas_control": true,
+          "field_control": true,
+          "pid_control": false,
+          "fixed_heater": false
+        },
+        "itc": {
+          "address": "TCPIP::172.31.109.136::7020::SOCKET",
+          "probe_signal": "DB8.T1",
+          "probe_loop": "DB8.T1",
+          "vti_signal": "DB6.T1",
+          "vti_loop": "DB6.T1",
+          "pressure": "DB3.P1"
+        }
+      }
+    },
+    "itc": {
+      "address": "TCPIP::172.31.109.136::7020::SOCKET",
+      "timeout_ms": 3000,
+      "read_termination": "\n",
+      "write_termination": "\n",
+      "probe_signal": "DB8.T1",
+      "probe_loop": "DB8.T1",
+      "vti_signal": "DB6.T1",
+      "vti_loop": "DB6.T1",
+      "pressure": "DB3.P1"
+    },
+    "ips": {
+      "address": "TCPIP0::172.31.109.116::7020::SOCKET",
+      "timeout_ms": 3000,
+      "read_termination": "\n",
+      "write_termination": "\n",
+      "magnet_group": "GRPZ",
+      "magnet_temperature": "MB1.T1",
+      "pt1_temperature": "DB8.T1",
+      "pt2_temperature": "DB7.T1",
+      "switch_on_delay_s": 300.0,
+      "switch_off_delay_s": 300.0,
+      "command_delay_s": 0.1
+    }
+  }
+}
