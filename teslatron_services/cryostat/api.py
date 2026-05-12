@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
+import signal
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Callable
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -91,12 +94,25 @@ async def permission_error_handler(
     return JSONResponse(status_code=403, content={"detail": str(exc)})
 
 
-def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
-    service = CryostatService(config or load_config(_default_config_path()))
+def _schedule_process_shutdown(delay_s: float = 0.2) -> None:
+    def _shutdown() -> None:
+        os.kill(os.getpid(), signal.SIGINT)
+
+    timer = threading.Timer(delay_s, _shutdown)
+    timer.daemon = True
+    timer.start()
+
+
+def create_app(
+    config: CryostatServiceConfig | None = None,
+    shutdown_callback: Callable[[], None] | None = None,
+) -> FastAPI:
+    service_config = config or load_config(_default_config_path())
     static_dir = Path(__file__).with_name("static")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        service = CryostatService(service_config)
         await service.start()
         app.state.cryostat = service
         try:
@@ -109,6 +125,9 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
     app.add_exception_handler(PermissionError, permission_error_handler)
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+    def service() -> CryostatService:
+        return app.state.cryostat
+
     @app.get("/")
     async def index() -> FileResponse:
         return FileResponse(static_dir / "index.html")
@@ -117,93 +136,104 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.post("/shutdown")
+    async def shutdown() -> dict[str, str]:
+        if shutdown_callback is not None:
+            shutdown_callback()
+        else:
+            _schedule_process_shutdown()
+        return {"status": "shutting_down"}
+
     @app.get("/config")
     async def get_config() -> dict:
-        return service.config_snapshot()
+        current_service = getattr(app.state, "cryostat", None)
+        if current_service is None:
+            return service_config.to_dict()
+        return current_service.config_snapshot()
 
     @app.post("/config/activate-insert")
     async def activate_insert(request: ActivateInsertRequest) -> dict:
-        return await service.activate_insert_profile(request.profile_id)
+        return await service().activate_insert_profile(request.profile_id)
 
     @app.post("/config/apply-sample-sensor")
     async def apply_sample_sensor(request: ApplySampleSensorRequest) -> dict:
-        return await service.apply_sample_sensor(request.preset_id)
+        return await service().apply_sample_sensor(request.preset_id)
 
     @app.get("/state")
     async def get_state() -> dict:
-        return service.state_snapshot()
+        return service().state_snapshot()
 
     @app.get("/recipes/status")
     async def recipe_status() -> dict:
-        return service.recipe_status()
+        return service().recipe_status()
 
     @app.get("/recipes")
     async def saved_recipes() -> dict:
-        return {"recipes": service.list_saved_recipes()}
+        return {"recipes": service().list_saved_recipes()}
 
     @app.get("/recipes/{recipe_id}")
     async def load_recipe(recipe_id: str) -> dict:
-        return service.load_saved_recipe(recipe_id)
+        return service().load_saved_recipe(recipe_id)
 
     @app.delete("/recipes/{recipe_id}")
     async def delete_recipe(recipe_id: str) -> dict:
-        await service.delete_saved_recipe(recipe_id)
+        await service().delete_saved_recipe(recipe_id)
         return {"deleted": recipe_id}
 
     @app.post("/recipes/{recipe_id}/rename")
     async def rename_recipe(recipe_id: str, request: RecipeRenameRequest) -> dict:
-        return await service.rename_saved_recipe(recipe_id, request.new_name)
+        return await service().rename_saved_recipe(recipe_id, request.new_name)
 
     @app.post("/recipes/{recipe_id}/duplicate")
     async def duplicate_recipe(recipe_id: str, request: RecipeRenameRequest) -> dict:
-        return await service.duplicate_saved_recipe(recipe_id, request.new_name)
+        return await service().duplicate_saved_recipe(recipe_id, request.new_name)
 
     @app.post("/recipes/start")
     async def start_recipe(request: RecipeRequest) -> dict:
-        return await service.start_recipe(request.dict())
+        return await service().start_recipe(request.dict())
 
     @app.post("/recipes/save")
     async def save_recipe(request: RecipeRequest) -> dict:
-        return await service.save_recipe(request.dict())
+        return await service().save_recipe(request.dict())
 
     @app.post("/recipes/acknowledge")
     async def acknowledge_recipe() -> dict:
-        return await service.acknowledge_recipe()
+        return await service().acknowledge_recipe()
 
     @app.post("/recipes/signal")
     async def signal_recipe(request: RecipeSignalRequest) -> dict:
-        return await service.signal_recipe(request.signal, request.message)
+        return await service().signal_recipe(request.signal, request.message)
 
     @app.post("/recipes/abort")
     async def abort_recipe() -> dict:
-        return await service.abort_recipe()
+        return await service().abort_recipe()
 
     @app.get("/diagnostics")
     async def diagnostics() -> dict:
-        return service.diagnostics()
+        return service().diagnostics()
 
     @app.get("/diagnostics/resources")
     async def diagnostics_resources() -> dict:
-        return await service.visa_resources()
+        return await service().visa_resources()
 
     @app.get("/diagnostics/catalog")
     async def diagnostics_catalog() -> dict:
         try:
-            return await service.catalog()
+            return await service().catalog()
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.get("/diagnostics/readings")
     async def diagnostics_readings() -> dict:
         try:
-            return await service.raw_readings()
+            return await service().raw_readings()
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.post("/diagnostics/query")
     async def diagnostics_query(request: DiagnosticQueryRequest) -> dict:
         try:
-            return await service.diagnostic_query(request.target, request.command)
+            return await service().diagnostic_query(request.target, request.command)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
@@ -211,7 +241,7 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
 
     @app.post("/commands/ramp-temperature")
     async def ramp_temperature(request: RampTemperatureRequest) -> dict:
-        return await service.ramp_temperature(
+        return await service().ramp_temperature(
             request.target_K,
             request.rate_K_per_min,
             loop="both",
@@ -219,7 +249,7 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
 
     @app.post("/commands/temperature/{loop}/ramp")
     async def ramp_temperature_loop(loop: str, request: RampTemperatureRequest) -> dict:
-        return await service.ramp_temperature(
+        return await service().ramp_temperature(
             request.target_K,
             request.rate_K_per_min,
             loop=loop,
@@ -230,21 +260,21 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
         loop: str,
         request: TargetTemperatureRequest,
     ) -> dict:
-        return await service.set_temperature_target(
+        return await service().set_temperature_target(
             request.target_K,
             loop=loop,
         )
 
     @app.post("/commands/temperature/{loop}/fixed-heater")
     async def fixed_heater_loop(loop: str, request: FixedHeaterRequest) -> dict:
-        return await service.set_temperature_fixed_heater(
+        return await service().set_temperature_fixed_heater(
             loop,
             request.heater_percent,
         )
 
     @app.post("/commands/temperature/{loop}/pid")
     async def set_pid_loop(loop: str, request: PIDRequest) -> dict:
-        return await service.set_temperature_pid(
+        return await service().set_temperature_pid(
             loop,
             request.p,
             request.i,
@@ -254,50 +284,51 @@ def create_app(config: CryostatServiceConfig | None = None) -> FastAPI:
 
     @app.post("/commands/ramp-field")
     async def ramp_field(request: RampFieldRequest) -> dict:
-        return await service.ramp_field(
+        return await service().ramp_field(
             request.target_T,
             request.rate_T_per_min,
         )
 
     @app.post("/commands/ramp-to-zero")
     async def ramp_to_zero(request: RampToZeroRequest) -> dict:
-        return await service.ramp_to_zero(
+        return await service().ramp_to_zero(
             request.rate_T_per_min,
         )
 
     @app.post("/commands/clamp")
     async def clamp() -> dict:
-        return await service.clamp()
+        return await service().clamp()
 
     @app.post("/commands/hold")
     async def hold() -> dict:
-        return await service.hold()
+        return await service().hold()
 
     @app.post("/commands/abort")
     async def abort() -> dict:
-        return await service.abort()
+        return await service().abort()
 
     @app.post("/commands/vti/gas/set-needle")
     async def set_vti_needle(request: NeedleValveRequest) -> dict:
-        return await service.set_vti_needle(request.needle_valve_percent)
+        return await service().set_vti_needle(request.needle_valve_percent)
 
     @app.post("/commands/vti/gas/set-pressure")
     async def set_vti_pressure(request: PressureRequest) -> dict:
-        return await service.set_vti_pressure(request.pressure_mbar)
+        return await service().set_vti_pressure(request.pressure_mbar)
 
     @app.post("/commands/ips/switch-heater")
     async def set_switch_heater(request: SwitchHeaterRequest) -> dict:
-        return await service.set_switch_heater(request.enabled)
+        return await service().set_switch_heater(request.enabled)
 
     @app.websocket("/ws/state")
     async def websocket_state(websocket: WebSocket) -> None:
         await websocket.accept()
-        queue = await service.subscribe()
+        current_service = service()
+        queue = await current_service.subscribe()
         try:
             while True:
                 await websocket.send_json(await queue.get())
         except WebSocketDisconnect:
-            service.unsubscribe(queue)
+            current_service.unsubscribe(queue)
 
     return app
 

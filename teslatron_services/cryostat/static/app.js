@@ -1024,6 +1024,14 @@ async function postJson(url, payload = null) {
   return text ? JSON.parse(text) : {};
 }
 
+async function shutdownService() {
+  await postJson("/shutdown");
+  stopPolling();
+  stopReconnect();
+  setBadge("connectionBadge", "Stopping", "warn");
+  addEvent("Shutdown requested");
+}
+
 function currentRecipeStepFromForm() {
   const type = el("recipeStepType").value;
   if (type === "ramp_temperature") {
@@ -1327,6 +1335,25 @@ function bindCommands() {
   el("holdButton").addEventListener("click", () => runCommand(() => postJson("/commands/hold"), "Hold"));
   el("clampButton").addEventListener("click", () => runCommand(() => postJson("/commands/clamp"), "Clamp"));
   el("abortButton").addEventListener("click", () => runCommand(() => postJson("/commands/abort"), "Abort"));
+  el("shutdownButton").addEventListener("click", async () => {
+    if (!window.confirm("Stop this Teslatron service instance and free its port?")) {
+      return;
+    }
+    const button = el("shutdownButton");
+    button.disabled = true;
+    try {
+      await shutdownService();
+      const message = el("commandMessage");
+      message.className = "message";
+      message.textContent = "Shutdown requested";
+    } catch (error) {
+      button.disabled = false;
+      const message = el("commandMessage");
+      message.className = "message error";
+      message.textContent = error.message;
+      addEvent("Shutdown failed");
+    }
+  });
   el("clearEvents").addEventListener("click", () => {
     el("events").replaceChildren();
   });

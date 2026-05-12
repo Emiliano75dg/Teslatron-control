@@ -184,6 +184,18 @@ h3 {
   font-size: 12px;
 }
 
+.shutdown-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #efc3bc;
+  border-radius: 8px;
+  background: #fff3f1;
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -196,6 +208,12 @@ h3 {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel-strong);
+}
+
+.danger-button {
+  background: var(--danger);
+  border-color: #8f1912;
+  color: #ffffff;
 }
 
 .metric span,
