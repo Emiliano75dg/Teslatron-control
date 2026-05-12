@@ -78,6 +78,15 @@ Use the read-only example config for first checks:
 config/heliox_readonly.example.json
 ```
 
+For local GUI-only checks without Heliox hardware, use:
+
+```text
+config/heliox_local_gui.example.json
+```
+
+This offline config is intentionally writable so the GUI controls remain interactive.
+Commands still stay safe because the ITC/IPS addresses point to loopback-only dummy endpoints.
+
 For control sessions, use:
 
 ```text
@@ -88,6 +97,12 @@ Start it with:
 
 ```bash
 python3 -m teslatron_services --config config/heliox_readonly.example.json --port 8767
+```
+
+For the offline GUI-only config:
+
+```bash
+python3 -m teslatron_services --config config/heliox_local_gui.example.json --port 8767
 ```
 
 Current Heliox model:

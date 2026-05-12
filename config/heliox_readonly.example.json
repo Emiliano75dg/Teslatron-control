@@ -22,7 +22,7 @@
           "fixed_heater": false
         },
         "itc": {
-          "address": "TCPIP::172.31.109.136::7020::SOCKET",
+          "address": "TCPIP::172.31.109.137::7020::SOCKET",
           "probe_signal": "DB8.T1",
           "probe_loop": "DB8.T1",
           "vti_signal": "DB6.T1",
@@ -32,7 +32,7 @@
       }
     },
     "itc": {
-      "address": "TCPIP::172.31.109.136::7020::SOCKET",
+      "address": "TCPIP::172.31.109.137::7020::SOCKET",
       "timeout_ms": 3000,
       "read_termination": "\n",
       "write_termination": "\n",

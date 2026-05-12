@@ -41,13 +41,31 @@ http://127.0.0.1:8765   (read-only)
 http://127.0.0.1:8766   (control)
 ```
 
-## 3. First live checks
+## 3. Safe shutdown and port release
+
+- Closing only the browser tab does not stop the service.
+- To stop the service cleanly, use one of these:
+  - press `Ctrl+C` in the terminal that started `python3 -m teslatron_services ...`
+  - click `Shutdown service` in the GUI Commands tab
+- Both paths stop Uvicorn cleanly, run the FastAPI lifespan shutdown, call `CryostatService.stop()`,
+  and close the active backend connection before the port is released.
+- To confirm the port is free after shutdown:
+
+```bash
+ss -tanp | grep 8765
+ss -tanp | grep 8766
+ss -tanp | grep 8767
+```
+
+- If the command returns no matching line, the port is no longer in use.
+
+## 4. First live checks
 
 - Confirm the GUI loads and keeps updating.
 - Confirm ITC sample temperature, VTI temperature, pressure, IPS field, current, and voltage look sensible.
 - If the iPS suddenly stops replying or resets connections, check whether LabVIEW or another VISA client is still connected.
 
-## 4. Safe command order
+## 5. Safe command order
 
 Use the smallest possible steps when testing live control:
 
@@ -58,7 +76,7 @@ Use the smallest possible steps when testing live control:
 
 Do not start with a large ramp or multiple simultaneous changes.
 
-## 5. Commands already validated in the lab
+## 6. Commands already validated in the lab
 
 On 2026-05-11, the following were confirmed on the live system:
 
@@ -67,31 +85,59 @@ On 2026-05-11, the following were confirmed on the live system:
 - Temperature ramp
 - Field ramp
 
-## 6. If something looks wrong
+## 7. If something looks wrong
 
 - Stop sending further commands.
 - Check whether the wrong config is loaded.
 - Check whether LabVIEW is still connected.
 - Return to the read-only config if you want to inspect state without risk.
 
-## 7. Recommended working habit
+## 8. Recommended working habit
 
 - Use LabVIEW or Python for a given live session, not both at once.
 - Keep the read-only config as the default inspection mode.
 - Switch to the control config only when you are ready to send commands.
 
-## 8. Heliox notes
+## 9. Heliox notes
 
 - For Heliox, use:
 
 ```text
 config/heliox_readonly.example.json
 config/heliox_control.example.json
+config/heliox_local_gui.example.json
 ```
 
+- Heliox requires a dedicated service started with `backend: "heliox"` in the
+  selected config file.
+- Changing insert profile through the standard Mercury service does not switch
+  the backend to Heliox; it only updates the active insert/profile mapping
+  within the current backend.
 - The Heliox backend controls the sample through the abstract device `HelioxX:HEL`.
 - VTI loop and gas control are still expected to come from the underlying Mercury iTC mapping.
 - Field control is still expected to come from the system-global Mercury iPS.
 - Direct sample PID/fixed-heater control is intentionally not exposed on Heliox.
-- As of 2026-05-11, the backend logic is implemented and locally tested, but the full GUI/API
-  validation path should still be re-checked in the lab before routine use.
+- The current live Heliox iTC address validated on 2026-05-12 is `172.31.109.137:7020`.
+- The current live Mercury iPS address validated on 2026-05-12 is `172.31.109.116:7020`.
+- The local docs under `docs/manuals` support the current Heliox raw mapping:
+  `DB8.T1` = `He3` pot low, `DB7.T1` = `He3` pot high, `DB6.T1` = `He4` / VTI side,
+  `MB1.T1` = `He3` sorb, `DB3.P1` = pressure, `DB4.G1` = needle valve.
+- Recommended example startup:
+
+```bash
+python3 -m teslatron_services --config config/heliox_readonly.example.json --port 8767
+```
+
+- For local GUI checks without Heliox hardware, use:
+
+```bash
+python3 -m teslatron_services --config config/heliox_local_gui.example.json --port 8767
+```
+
+- This local GUI config is writable on purpose so dropdowns and command forms stay usable during frontend checks.
+- It remains safe because all ITC/IPS addresses are redirected to local loopback ports with no real hardware behind them.
+
+- As of 2026-05-12, the live GUI/API path was re-validated in the lab.
+- A service lifecycle bug was also identified and fixed: the `CryostatService` must be created
+  inside the FastAPI lifespan, not before server startup, otherwise live controller polling may
+  fail with intermittent `Connection reset by peer` errors.

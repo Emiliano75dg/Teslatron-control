@@ -490,6 +490,60 @@ plus detailed `dev_cfg` fragments. Those files confirm the following raw device 
 This is strong evidence that the Heliox example configs should not inherit the default
 Mercury `VTI` mapping (`MB1.T1`), because on this system `MB1.T1` is the sorb, not the VTI.
 
+### Documentation-backed versus live-validated Heliox mapping
+
+As of 2026-05-12, the following points should be treated as both documented in the
+local `docs/manuals` files and validated on live hardware:
+
+- Heliox iTC address for the current lab session: `172.31.109.137:7020`
+- Mercury iPS address: `172.31.109.116:7020`
+- `DB8.T1` is the `He3` pot low sensor
+- `DB7.T1` is the `He3` pot high sensor
+- `DB6.T1` is the `He4` pot / VTI-side sensor
+- `MB1.T1` is the `He3` sorb sensor
+- `DB3.P1` is the pressure sensor
+- `DB4.G1` is the VTI / needle-valve actuator
+- the abstract `HelioxX:HEL` interface responds on the live Heliox controller
+
+The following points are now well-supported by documentation and live behaviour, but
+remain software-level interpretation choices rather than explicit controller labels:
+
+- using `HelioxX:HEL:SIG:TEMP` as the primary user-facing sample readback
+- using `DB6.T1` as the primary shared VTI / He4-side temperature channel
+- keeping pressure and needle-valve control on the shared Mercury path through
+  `DB3.P1` and `DB4.G1`, rather than re-expressing them through mode-specific
+  HelioxX parameters
+
+The main uncertainties that remain are no longer about raw hardware identity; they are
+about which signals should be considered authoritative for UI and control semantics.
+
+### Heliox operating modes confirmed by manual
+
+The local
+[docs/manuals/HelioxVT Manual - Issue 5.pdf](/home/emiliano/Documents/Automazione/Teslatron_control-main/docs/manuals/HelioxVT%20Manual%20-%20Issue%205.pdf:1)
+also supports the current software interpretation of Heliox operating modes.
+
+In particular, the manual describes the controller as choosing operating behaviour from
+the sample target `TSET` and the current cryostat state, with named modes including:
+
+- `Rapid Cool`
+- `He4 Fill`
+- `High Temp`
+- `Regenerate`
+- `Low Temp`
+
+That is consistent with the current backend design:
+
+- user-facing sample control goes through the abstract `HelioxX:HEL` interface
+- low-temperature sample regulation is driven through the `He3` sorb path
+- high-temperature sample regulation is driven through the `He3` pot heater path
+- VTI temperature, pressure, and needle-valve behaviour remain on the shared Mercury path
+
+The manual also reinforces that Heliox control semantics are not just raw Mercury loop
+setpoints. The controller reevaluates the operating mode when `TSET` is changed, which
+is another reason to prefer `SET:DEV:HelioxX:HEL:TSET:{...}` over bypassing the abstract
+controller with raw loop writes.
+
 ### HelioxX template thresholds
 
 The file

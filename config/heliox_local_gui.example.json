@@ -10,7 +10,7 @@
     "insert_profiles": {
       "heliox_probe": {
         "name": "Heliox probe",
-        "description": "Heliox abstract controller via HelioxX:HEL commands.",
+        "description": "Offline Heliox GUI profile for local frontend checks without real hardware. Commands stay local and fail harmlessly against loopback endpoints.",
         "sample_thermometer": "Heliox He-3 pot",
         "capabilities": {
           "temperature_control": true,
@@ -22,7 +22,8 @@
           "fixed_heater": false
         },
         "itc": {
-          "address": "TCPIP::172.31.109.137::7020::SOCKET",
+          "address": "TCPIP::127.0.0.1::65001::SOCKET",
+          "timeout_ms": 100,
           "probe_signal": "DB8.T1",
           "probe_loop": "DB8.T1",
           "vti_signal": "DB6.T1",
@@ -32,8 +33,8 @@
       }
     },
     "itc": {
-      "address": "TCPIP::172.31.109.137::7020::SOCKET",
-      "timeout_ms": 3000,
+      "address": "TCPIP::127.0.0.1::65001::SOCKET",
+      "timeout_ms": 100,
       "read_termination": "\n",
       "write_termination": "\n",
       "probe_signal": "DB8.T1",
@@ -43,8 +44,8 @@
       "pressure": "DB3.P1"
     },
     "ips": {
-      "address": "TCPIP0::172.31.109.116::7020::SOCKET",
-      "timeout_ms": 3000,
+      "address": "TCPIP0::127.0.0.1::65002::SOCKET",
+      "timeout_ms": 100,
       "read_termination": "\n",
       "write_termination": "\n",
       "magnet_group": "GRPZ",
