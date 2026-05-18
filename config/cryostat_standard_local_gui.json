@@ -1,6 +1,6 @@
 {
   "cryostat": {
-    "backend": "standard",
+    "backend": "mock",
     "read_only": false,
     "enable_shutdown": true,
     "active_insert": "fisher_probe",
@@ -26,7 +26,7 @@
     "insert_profiles": {
       "fisher_probe": {
         "name": "Fisher probe",
-        "description": "Offline standard GUI profile for local frontend checks without real hardware. Commands stay local and fail harmlessly against loopback endpoints.",
+        "description": "Offline standard GUI profile for local frontend checks without real hardware. Uses the mock backend while preserving the standard insert/profile layout.",
         "sample_thermometer": "",
         "sample_sensor_options": ["fisher_cernox"],
         "default_sample_sensor": "fisher_cernox",
