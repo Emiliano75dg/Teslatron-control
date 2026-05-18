@@ -38,7 +38,7 @@ class B2902B:
     ) -> None:
         channel = self.channel
         self.transport.write(f":SOUR{channel}:FUNC:MODE CURR")
-        self.transport.write(f":SENS{channel}:FUNC \"VOLT\",\"CURR\"")
+        self.transport.write(f':SENS{channel}:FUNC "VOLT","CURR"')
         self.transport.write(f":SENS{channel}:VOLT:PROT {compliance_v}")
         self.transport.write(f":SENS{channel}:VOLT:NPLC {nplc}")
         self.transport.write(f":SENS{channel}:CURR:NPLC {nplc}")

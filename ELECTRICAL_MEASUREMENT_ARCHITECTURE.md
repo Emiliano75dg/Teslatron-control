@@ -596,6 +596,55 @@ On the cryostat side, recipe integration should also support:
 - recording the terminal status of the electrical plan
 - aborting or retrying based on measurement failure
 
+## Cryostat-side LabVIEW handshake
+
+The cryostat service now exposes a simple HTTP handshake for LabVIEW or other
+external software that needs cryostat context while electrical measurements are
+running.
+
+Core polling endpoint:
+
+- `GET /measurement-context`
+
+Recommended payload:
+
+```json
+{
+  "timestamp_unix_s": 1710000000.123,
+  "timestamp_iso": "2024-03-09T10:00:00.123Z",
+  "sample_temperature_K": 4.21,
+  "field_T": 1.5,
+  "safe_to_measure": true
+}
+```
+
+Use explicit fields, not anonymous arrays such as `[T, B]`.
+
+For recipe synchronization, the cryostat service also provides:
+
+- `GET /external-measurements/pending`
+- `POST /external-measurements/complete`
+- `POST /recipes/signal`
+
+Recipe support is based on an `external_measurement` step with:
+
+- `mode: "point"` for stable-point measurements that pause the recipe
+- `mode: "start"` to request the start of a continuous acquisition before a ramp
+- `mode: "stop"` to request the stop of the continuous acquisition after a ramp
+
+Typical continuous-flow sequence:
+
+1. the recipe sends `R_vs_T.start`
+2. LabVIEW confirms `R_vs_T.started`
+3. the cryostat recipe proceeds into the ramp
+4. LabVIEW polls `GET /measurement-context` during the ramp
+5. the recipe later sends `R_vs_T.stop`
+6. LabVIEW confirms `R_vs_T.stopped`
+
+For slow acquisitions around 1-5 Hz, HTTP polling is a simple adequate
+solution. For faster data collection, timestamps should be recorded on both
+sides and merged offline.
+
 ## Practical recommendation
 
 For this project, the best long-term direction is:

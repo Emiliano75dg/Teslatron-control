@@ -277,7 +277,7 @@ function renderRecipeStatus(recipe) {
     ? "ok"
     : status === "error" || status === "aborted"
       ? "error"
-      : status === "waiting_signal"
+      : ["waiting_signal", "waiting_external_measurement"].includes(status)
         ? "warn"
         : "neutral";
   setBadge("recipeStatusBadge", status, level);
@@ -290,6 +290,17 @@ function renderRecipeStatus(recipe) {
     : `${Number(stepIndex) + 1}/${stepCount} ${recipeStepSummary(recipe.current_step || {})}`;
   setText("recipeStep", stepLabel);
   setText("recipeMessageDetail", formatText(recipe.message || recipe.error));
+  const external = recipe.external_measurement || {};
+  setText("recipeExternalModeDetail", formatText(external.mode));
+  setText("recipeExternalRequestSignalDetail", formatText(external.request_signal));
+  setText("recipeExternalCompletionSignalDetail", formatText(external.completion_signal));
+  setText("recipeExternalFailureSignalDetail", formatText(external.failure_signal));
+  setText(
+    "recipeExternalTimeoutDetail",
+    external.timeout_s === null || external.timeout_s === undefined
+      ? "--"
+      : formatUnit(external.timeout_s, "s", 0),
+  );
   updateRecipeControlState(status);
 }
 
@@ -1074,6 +1085,18 @@ function currentRecipeStepFromForm() {
       duration_s: Number(el("recipeWaitS").value),
     };
   }
+  if (type === "external_measurement") {
+    return {
+      type,
+      mode: el("recipeExternalMode").value,
+      request_signal: el("recipeExternalRequestSignal").value || "measure_iv",
+      completion_signal:
+        el("recipeExternalCompletionSignal").value || "measure_iv.completed",
+      failure_signal: el("recipeExternalFailureSignal").value || "measure_iv.failed",
+      timeout_s: Number(el("recipeExternalTimeoutS").value),
+      message: el("recipeExternalMessage").value || "Run external measurement",
+    };
+  }
   return {
     type: "signal",
     signal: el("recipeSignal").value || "measurement_done",
@@ -1128,6 +1151,11 @@ function recipeStepSummary(step) {
   }
   if (step.type === "signal" || step.type === "notice") {
     return `Wait signal ${step.signal || "manual"}: ${step.message || "Continue when ready"}`;
+  }
+  if (step.type === "external_measurement") {
+    const mode = step.mode || "point";
+    const requestSignal = step.request_signal || "measure_iv";
+    return `${mode.toUpperCase()} external measurement ${requestSignal}: ${step.message || "Run external measurement"}`;
   }
   return formatText(step.type);
 }
@@ -1216,12 +1244,14 @@ function syncRecipeStepInputs() {
     .forEach((node) => node.classList.toggle("hidden", type !== "wait"));
   document.querySelectorAll(".recipe-signal-input")
     .forEach((node) => node.classList.toggle("hidden", type !== "signal"));
+  document.querySelectorAll(".recipe-external-input")
+    .forEach((node) => node.classList.toggle("hidden", type !== "external_measurement"));
 }
 
 function updateRecipeControlState(status = null) {
   const readOnly = Boolean(state.config && state.config.read_only);
   const activeStatus = status || (el("recipeStatus") ? el("recipeStatus").textContent : "idle");
-  const running = ["running", "waiting_signal"].includes(activeStatus);
+  const running = ["running", "waiting_signal", "waiting_external_measurement"].includes(activeStatus);
   const waitingNotice = activeStatus === "waiting_signal";
   const hasSavedRecipe = Boolean(selectedSavedRecipeId());
   const startButton = el("startRecipeButton");

@@ -9,9 +9,9 @@ All models include field validators to catch configuration errors early,
 before expensive hardware measurements are attempted.
 """
 
-from typing import Literal, Optional, Any, List, Dict, Union
-from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import Any, Dict, List, Literal, Optional, Union
 
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 VALID_CONTACTS = {"A", "B", "C", "D"}
 
@@ -20,8 +20,10 @@ VALID_CONTACTS = {"A", "B", "C", "D"}
 # Instruments Configuration Schema
 # ============================================================================
 
+
 class TransportConfig(BaseModel):
     """SCPI transport configuration (socket-based)."""
+
     default_timeout_s: float = Field(gt=0, description="Socket timeout in seconds")
     command_termination: str = Field(default="\n", description="Line terminator for SCPI commands")
     read_buffer_bytes: int = Field(default=65536, gt=0, description="Socket recv buffer size")
@@ -29,6 +31,7 @@ class TransportConfig(BaseModel):
 
 class B2902BConfig(BaseModel):
     """Keysight B2902B Precision SMU configuration."""
+
     model: Literal["Keysight_B2902B"] = "Keysight_B2902B"
     ip_address: str = Field(description="IP address for network connection")
     port: int = Field(ge=1, le=65535, description="TCP port number")
@@ -41,12 +44,14 @@ class B2902BConfig(BaseModel):
 
 class DAQ6510SwitchingModule(BaseModel):
     """Keithley 7709 switching module configuration."""
+
     model: Literal["Keithley_7709"] = "Keithley_7709"
     slot: int = Field(ge=1, le=3, description="Slot number in DAQ6510 (1-3)")
 
 
 class DAQ6510Config(BaseModel):
     """Keithley DAQ6510 Data Acquisition Unit configuration."""
+
     model: Literal["Keithley_DAQ6510"] = "Keithley_DAQ6510"
     ip_address: str = Field(description="IP address for network connection")
     port: int = Field(ge=1, le=65535, description="TCP port number")
@@ -57,10 +62,11 @@ class DAQ6510Config(BaseModel):
 
 class InstrumentsRootConfig(BaseModel):
     """Root schema for instruments.yaml."""
+
     version: int = Field(default=1, ge=1, description="Config format version")
     transport: TransportConfig = Field(description="SCPI transport settings")
     instruments: Dict[str, Any] = Field(description="Instrument definitions")
-    
+
     @field_validator("instruments")
     @classmethod
     def validate_instruments(cls, v: Dict[str, Any]) -> Dict[str, Any]:
@@ -76,22 +82,28 @@ class InstrumentsRootConfig(BaseModel):
 # Measurement Sequences Configuration Schema
 # ============================================================================
 
+
 class MeasurementDefaults(BaseModel):
     """Default measurement parameters."""
+
     settling_time_s: float = Field(gt=0, description="Settling time after relay change (s)")
     repeats: int = Field(ge=1, description="Number of repeats per measurement")
     contact_check_currents_A: List[float] = Field(
-        description="Current levels for contact check (A)",
-        min_length=1
+        description="Current levels for contact check (A)", min_length=1
     )
     characterization_currents_A: List[float] = Field(
-        description="Current levels for characterization (A)",
-        min_length=1
+        description="Current levels for characterization (A)", min_length=1
     )
     compliance_V: float = Field(gt=0, description="Voltage compliance limit (V)")
-    contact_check_remote_sense: bool = Field(default=False, description="Use remote sensing for contact check")
-    characterization_remote_sense: bool = Field(default=True, description="Use remote sensing for characterization")
-    remote_sense: Optional[bool] = Field(default=None, description="Legacy global remote sensing flag")
+    contact_check_remote_sense: bool = Field(
+        default=False, description="Use remote sensing for contact check"
+    )
+    characterization_remote_sense: bool = Field(
+        default=True, description="Use remote sensing for characterization"
+    )
+    remote_sense: Optional[bool] = Field(
+        default=None, description="Legacy global remote sensing flag"
+    )
 
     @field_validator("contact_check_currents_A", "characterization_currents_A")
     @classmethod
@@ -105,9 +117,14 @@ class MeasurementDefaults(BaseModel):
 
 class PairMeasurement(BaseModel):
     """Definition of a single pair measurement."""
+
     id: str = Field(description="Measurement identifier")
-    force_pair: List[str] = Field(min_length=2, max_length=2, description="Force contact pair [A/B/C/D, A/B/C/D]")
-    sense_pair: List[str] = Field(min_length=2, max_length=2, description="Sense contact pair [A/B/C/D, A/B/C/D]")
+    force_pair: List[str] = Field(
+        min_length=2, max_length=2, description="Force contact pair [A/B/C/D, A/B/C/D]"
+    )
+    sense_pair: List[str] = Field(
+        min_length=2, max_length=2, description="Sense contact pair [A/B/C/D, A/B/C/D]"
+    )
 
     @field_validator("force_pair", "sense_pair")
     @classmethod
@@ -121,19 +138,22 @@ class PairMeasurement(BaseModel):
 
 class ContactCheckSequence(BaseModel):
     """Contact-check sequence with local Kelvin pair measurements."""
+
     description: str = Field(description="Sequence description")
     mode: str = Field(description="Measurement mode (e.g., 'kelvin_local_single_channel')")
     currents_ref: str = Field(description="Reference key to defaults['currents_..._A']")
     pair_measurements: List[PairMeasurement] = Field(
-        min_length=1,
-        description="Pair measurements to perform"
+        min_length=1, description="Pair measurements to perform"
     )
     per_measurement_steps: List[str] = Field(description="Steps to execute per measurement")
-    quality_metrics: Optional[List[str]] = Field(default=None, description="Quality metrics to compute")
+    quality_metrics: Optional[List[str]] = Field(
+        default=None, description="Quality metrics to compute"
+    )
 
 
 class TerminalMeasurement(BaseModel):
     """Four-terminal measurement definition."""
+
     id: str = Field(description="Measurement identifier")
     current_pair: List[str] = Field(min_length=2, max_length=2)
     voltage_pair: List[str] = Field(min_length=2, max_length=2)
@@ -149,6 +169,7 @@ class TerminalMeasurement(BaseModel):
 
 class ReciprocityPair(BaseModel):
     """Reciprocity pair, either by reference id or inline measurement definition."""
+
     forward: Union[str, TerminalMeasurement]
     reciprocal: Union[str, TerminalMeasurement]
 
@@ -165,6 +186,7 @@ class SheetResistanceSolverConfig(BaseModel):
 
 class CharacterizationBlock(BaseModel):
     """One block inside full_characterization."""
+
     mode: str
     measurements: Optional[List[TerminalMeasurement]] = None
     measurement_pairs: Optional[List[ReciprocityPair]] = None
@@ -188,31 +210,42 @@ class CharacterizationBlock(BaseModel):
 
 class FullCharacterizationSequence(BaseModel):
     """Full characterization sequence composed of named measurement/derived blocks."""
+
     description: str
     currents_ref: str
     blocks: Dict[str, CharacterizationBlock] = Field(min_length=1)
 
     @field_validator("blocks")
     @classmethod
-    def validate_required_blocks(cls, v: Dict[str, CharacterizationBlock]) -> Dict[str, CharacterizationBlock]:
+    def validate_required_blocks(
+        cls, v: Dict[str, CharacterizationBlock]
+    ) -> Dict[str, CharacterizationBlock]:
         required = {"van_der_pauw", "reciprocity", "anisotropy_nonuniformity"}
         if not required.issubset(v.keys()):
-            raise ValueError(f"full_characterization blocks must include {required}, got {set(v.keys())}")
+            raise ValueError(
+                f"full_characterization blocks must include {required}, got {set(v.keys())}"
+            )
         return v
 
 
 class MeasurementSequencesConfig(BaseModel):
     """Named sequence definitions used by the planner."""
+
     contact_check: ContactCheckSequence
     full_characterization: FullCharacterizationSequence
 
 
 class MeasurementSequencesAssumptions(BaseModel):
     """Assumptions about sample and measurement setup."""
-    sample_contacts: List[str] = Field(min_length=4, max_length=4, description="Sample contacts [A, B, C, D]")
+
+    sample_contacts: List[str] = Field(
+        min_length=4, max_length=4, description="Sample contacts [A, B, C, D]"
+    )
     contact_order: str = Field(description="Contact arrangement order")
     current_reversal: Literal["smu", "relays"] = Field(description="How current is reversed")
-    relay_state_between_polarities: str = Field(description="Relay behavior between polarity changes")
+    relay_state_between_polarities: str = Field(
+        description="Relay behavior between polarity changes"
+    )
     multiplexer: str = Field(description="Multiplexer model")
     meter_source: str = Field(description="Voltage measurement source")
 
@@ -228,6 +261,7 @@ class MeasurementSequencesAssumptions(BaseModel):
 
 class MeasurementSequencesRootConfig(BaseModel):
     """Root schema for measurement_sequences.yaml."""
+
     version: int = Field(default=1, ge=1, description="Config format version")
     assumptions: MeasurementSequencesAssumptions = Field(description="Sample assumptions")
     defaults: MeasurementDefaults = Field(description="Default parameters")
@@ -239,8 +273,10 @@ class MeasurementSequencesRootConfig(BaseModel):
 # Routing Template Configuration Schema
 # ============================================================================
 
+
 class MatrixConfig(BaseModel):
     """Multiplexer matrix configuration."""
+
     model: Literal["Keithley_7709"] = "Keithley_7709"
     daq_slot: int = Field(ge=1, le=3, description="DAQ slot containing matrix")
     rows: int = Field(gt=0, description="Number of rows in matrix")
@@ -253,6 +289,7 @@ class MatrixConfig(BaseModel):
 
 class KelvinSingleChannelRows(BaseModel):
     """Row definitions for single-channel Kelvin measurement."""
+
     smu_channel: int = Field(ge=1, description="SMU channel")
     force_hi: int = Field(ge=1, description="Force HIGH row")
     force_lo: int = Field(ge=1, description="Force LOW row")
@@ -262,6 +299,7 @@ class KelvinSingleChannelRows(BaseModel):
 
 class DualChannelRowsOptional(BaseModel):
     """Row definitions for dual-channel measurement (optional)."""
+
     current_smu_channel: int = Field(ge=1, description="Current SMU channel")
     voltage_smu_channel: int = Field(ge=1, description="Voltage SMU channel")
     ch1_force_hi: int = Field(ge=1, description="Channel 1 force HIGH row")
@@ -274,14 +312,18 @@ class DualChannelRowsOptional(BaseModel):
 
 class RoutingTemplateRootConfig(BaseModel):
     """Root schema for routing_template.yaml."""
+
     version: int = Field(default=1, ge=1, description="Config format version")
     description: str = Field(default="", description="Template description")
     matrix: MatrixConfig = Field(description="Matrix configuration")
-    sample_columns: Dict[str, int] = Field(description="Contact-to-column mapping {A: col, B: col, ...}")
-    single_channel_kelvin_rows: KelvinSingleChannelRows = Field(description="Single-channel Kelvin rows")
+    sample_columns: Dict[str, int] = Field(
+        description="Contact-to-column mapping {A: col, B: col, ...}"
+    )
+    single_channel_kelvin_rows: KelvinSingleChannelRows = Field(
+        description="Single-channel Kelvin rows"
+    )
     dual_channel_rows_optional: Optional[DualChannelRowsOptional] = Field(
-        default=None,
-        description="Optional dual-channel row definitions"
+        default=None, description="Optional dual-channel row definitions"
     )
     routing_rules: Dict[str, Any] = Field(description="Routing rules per measurement mode")
 
@@ -292,11 +334,11 @@ class RoutingTemplateRootConfig(BaseModel):
         required = {"A", "B", "C", "D"}
         if set(v.keys()) != required:
             raise ValueError(f"sample_columns must have contacts {required}, got {set(v.keys())}")
-        
+
         for contact, col in v.items():
             if col < 1:
                 raise ValueError(f"Column for {contact} must be >= 1, got {col}")
-        
+
         return v
 
     @model_validator(mode="after")

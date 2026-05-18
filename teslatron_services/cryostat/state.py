@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field as dataclass_field
+from dataclasses import asdict, dataclass
+from dataclasses import field as dataclass_field
 from enum import StrEnum
 from time import time
 from typing import Any

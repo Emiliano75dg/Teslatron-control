@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import csv
 import contextlib
 import copy
+import csv
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
-from time import monotonic
-from time import time
+from time import monotonic, time
 from typing import Any, Callable
 
 from .backends import CryostatBackend, create_backend, list_visa_resources
@@ -41,6 +40,18 @@ class CryostatService:
     @property
     def state(self) -> CryostatState:
         return self._state
+
+    def measurement_context(self) -> dict[str, Any]:
+        timestamp = self._state.timestamp
+        return {
+            "timestamp_unix_s": timestamp,
+            "timestamp_iso": datetime.fromtimestamp(timestamp, tz=UTC)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "sample_temperature_K": self._state.temperature.sample.temperature_K,
+            "field_T": self._state.field.B_T,
+            "safe_to_measure": self._state.safety.safe_to_measure,
+        }
 
     async def start(self) -> None:
         if self._task is None:
@@ -148,7 +159,9 @@ class CryostatService:
     ) -> dict[str, Any]:
         self._ensure_writable()
         self._validate_temperature_loop(loop)
-        self._ensure_capability("fixed_heater", "Fixed heater mode is not supported for the active insert")
+        self._ensure_capability(
+            "fixed_heater", "Fixed heater mode is not supported for the active insert"
+        )
         self._ensure_temperature_supported(loop)
         self._validate_heater_percent(heater_percent)
         return await self._run_hardware_transaction(
@@ -175,9 +188,7 @@ class CryostatService:
     async def set_switch_heater(self, enabled: bool) -> dict[str, Any]:
         self._ensure_writable()
         self._ensure_field_supported()
-        return await self._run_hardware_transaction(
-            lambda: self.backend.set_switch_heater(enabled)
-        )
+        return await self._run_hardware_transaction(lambda: self.backend.set_switch_heater(enabled))
 
     async def apply_sample_sensor(self, preset_id: str) -> dict[str, Any]:
         self._ensure_writable()
@@ -203,6 +214,17 @@ class CryostatService:
 
     def recipe_status(self) -> dict[str, Any]:
         return copy.deepcopy(self._recipe_status)
+
+    def pending_external_measurement(self) -> dict[str, Any]:
+        pending = copy.deepcopy(self._recipe_status.get("external_measurement"))
+        if self._recipe_status.get("status") != "waiting_external_measurement" or not pending:
+            return {"pending": False}
+        return {
+            "pending": True,
+            **pending,
+            "recipe_status": self._recipe_status.get("status"),
+            **self.measurement_context(),
+        }
 
     def list_saved_recipes(self) -> list[dict[str, Any]]:
         recipes = []
@@ -295,6 +317,9 @@ class CryostatService:
             "started_at": time(),
             "finished_at": None,
             "error": None,
+            "waiting_signal": None,
+            "last_signal": None,
+            "external_measurement": None,
         }
         await self._publish(self.state_snapshot())
         self._recipe_task = asyncio.create_task(
@@ -327,6 +352,7 @@ class CryostatService:
         self,
         signal: str,
         message: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized = self._normalize_recipe_signal(signal)
         self._set_recipe_signal(normalized)
@@ -334,9 +360,31 @@ class CryostatService:
             "signal": normalized,
             "message": message,
             "received_at": time(),
+            "metadata": copy.deepcopy(metadata) if metadata is not None else None,
         }
         await self._publish(self.state_snapshot())
         return self.recipe_status()
+
+    async def complete_external_measurement(
+        self,
+        request_signal: str,
+        status: str,
+        message: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        pending = self._recipe_status.get("external_measurement")
+        if self._recipe_status.get("status") != "waiting_external_measurement" or not pending:
+            raise ValueError("No external measurement is pending")
+        normalized_request = self._normalize_recipe_signal(request_signal)
+        if normalized_request != pending["request_signal"]:
+            raise ValueError("request_signal does not match the pending external measurement")
+        if status == "completed":
+            target_signal = pending["completion_signal"]
+        elif status == "failed":
+            target_signal = pending["failure_signal"]
+        else:
+            raise ValueError("External measurement status must be 'completed' or 'failed'")
+        return await self.signal_recipe(target_signal, message, metadata=metadata)
 
     async def _run_hardware_transaction(
         self,
@@ -360,6 +408,7 @@ class CryostatService:
                         "message": self._recipe_step_message(step),
                         "error": None,
                         "waiting_signal": None,
+                        "external_measurement": None,
                     }
                 )
                 await self._publish(self.state_snapshot())
@@ -372,6 +421,7 @@ class CryostatService:
                     "message": "Recipe completed",
                     "finished_at": time(),
                     "waiting_signal": None,
+                    "external_measurement": None,
                 }
             )
         except asyncio.CancelledError:
@@ -381,6 +431,7 @@ class CryostatService:
                     "message": "Recipe aborted",
                     "finished_at": time(),
                     "waiting_signal": None,
+                    "external_measurement": None,
                 }
             )
             raise
@@ -393,6 +444,7 @@ class CryostatService:
                     "error": str(exc),
                     "finished_at": time(),
                     "waiting_signal": None,
+                    "external_measurement": None,
                 }
             )
         finally:
@@ -433,6 +485,72 @@ class CryostatService:
             event = self._recipe_signal_events.setdefault(signal, asyncio.Event())
             await event.wait()
             event.clear()
+        elif step_type == "external_measurement":
+            await self._wait_for_external_measurement_step(step)
+
+    async def _wait_for_external_measurement_step(self, step: dict[str, Any]) -> None:
+        self._recipe_status.update(
+            {
+                "status": "waiting_external_measurement",
+                "message": step["message"],
+                "external_measurement": {
+                    "mode": step["mode"],
+                    "request_signal": step["request_signal"],
+                    "completion_signal": step["completion_signal"],
+                    "failure_signal": step["failure_signal"],
+                    "message": step["message"],
+                    "timeout_s": step["timeout_s"],
+                    "requested_at": time(),
+                },
+            }
+        )
+        await self._publish(self.state_snapshot())
+        matched_signal = await self._wait_for_named_signal(
+            [step["completion_signal"], step["failure_signal"]],
+            timeout_s=step["timeout_s"],
+            label=f"external measurement {step['request_signal']}",
+        )
+        if matched_signal == step["failure_signal"]:
+            detail = self._recipe_status.get("last_signal") or {}
+            failure_message = detail.get("message") or step["message"]
+            raise RuntimeError(
+                f"External measurement failed for {step['request_signal']}: {failure_message}"
+            )
+
+    async def _wait_for_named_signal(
+        self,
+        signals: list[str],
+        *,
+        timeout_s: float,
+        label: str,
+    ) -> str:
+        events = []
+        waiters = []
+        try:
+            for signal in signals:
+                event = self._recipe_signal_events.setdefault(signal, asyncio.Event())
+                events.append((signal, event))
+                waiters.append(asyncio.create_task(event.wait()))
+            done, pending = await asyncio.wait(
+                waiters,
+                timeout=timeout_s if timeout_s > 0 else None,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                raise TimeoutError(f"Timed out waiting for {label}")
+            completed_task = next(iter(done))
+            completed_index = waiters.index(completed_task)
+            matched_signal = events[completed_index][0]
+            for _, event in events:
+                event.clear()
+            return matched_signal
+        finally:
+            for waiter in waiters:
+                if not waiter.done():
+                    waiter.cancel()
+            for waiter in waiters:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await waiter
 
     def _validate_recipe(self, recipe: dict[str, Any]) -> list[dict[str, Any]]:
         raw_steps = recipe.get("steps")
@@ -508,6 +626,27 @@ class CryostatService:
             if len(message) > 300:
                 raise ValueError("Notice message is too long")
             return {"type": "signal", "signal": signal, "message": message}
+        if step_type == "external_measurement":
+            mode = str(step.get("mode") or "").strip().lower()
+            if mode not in {"point", "start", "stop"}:
+                raise ValueError("external_measurement mode must be 'point', 'start', or 'stop'")
+            message = str(step.get("message") or "Run external measurement")
+            if len(message) > 300:
+                raise ValueError("External measurement message is too long")
+            timeout_s = _required_float(step, "timeout_s")
+            if timeout_s <= 0 or timeout_s > 30 * 24 * 60 * 60:
+                raise ValueError(
+                    "External measurement timeout_s must be between 0 and 2592000 seconds"
+                )
+            return {
+                "type": step_type,
+                "mode": mode,
+                "request_signal": self._normalize_recipe_signal(step.get("request_signal")),
+                "completion_signal": self._normalize_recipe_signal(step.get("completion_signal")),
+                "failure_signal": self._normalize_recipe_signal(step.get("failure_signal")),
+                "timeout_s": timeout_s,
+                "message": message,
+            }
         raise ValueError(f"Unknown recipe step type: {step_type}")
 
     def _recipe_step_message(self, step: dict[str, Any]) -> str:
@@ -524,13 +663,20 @@ class CryostatService:
             return f"Waiting {step['duration_s']} s"
         if step_type == "signal":
             return step.get("message") or f"Waiting for signal {step.get('signal')}"
+        if step_type == "external_measurement":
+            return (
+                step.get("message")
+                or f"Waiting for external measurement {step.get('request_signal')}"
+            )
         return step_type
 
     async def _wait_for_temperature_step(self, step: dict[str, Any]) -> None:
         loop = step.get("loop", "both")
         target_K = step["target_K"]
         tolerance_K = step["tolerance_K"]
-        targets = {"sample": target_K, "vti": target_K * 0.9} if loop == "both" else {loop: target_K}
+        targets = (
+            {"sample": target_K, "vti": target_K * 0.9} if loop == "both" else {loop: target_K}
+        )
 
         def condition() -> bool:
             for loop_name, loop_target_K in targets.items():
@@ -619,6 +765,7 @@ class CryostatService:
             "error": None,
             "waiting_signal": None,
             "last_signal": None,
+            "external_measurement": None,
         }
 
     def _recipe_dir(self) -> Path:

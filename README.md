@@ -60,6 +60,50 @@ Saved recipes are kept under the configured `recipe_dir`. The `/recipes/save`
 endpoint now defaults to safe behavior and will not overwrite an existing
 recipe unless `overwrite=true` is provided explicitly in the JSON payload.
 
+### LabVIEW integration for electrical measurements
+
+The cryostat service now exposes a lightweight endpoint intended for LabVIEW or
+other external acquisition software:
+
+```text
+GET /measurement-context
+```
+
+Recommended response shape:
+
+```json
+{
+  "timestamp_unix_s": 1710000000.123,
+  "timestamp_iso": "2024-03-09T10:00:00.123Z",
+  "sample_temperature_K": 4.21,
+  "field_T": 1.5,
+  "safe_to_measure": true
+}
+```
+
+Use explicit JSON fields such as `sample_temperature_K` and `field_T`. Do not
+use anonymous arrays like `[T, B]`, because they are fragile across LabVIEW,
+Python, and future API revisions.
+
+Recipe-based external measurement handshakes are also available through:
+
+```text
+GET  /external-measurements/pending
+POST /external-measurements/complete
+POST /recipes/signal
+```
+
+Recipes can include `external_measurement` steps with:
+
+- `mode: "point"` to pause at a stable point and wait for LabVIEW
+- `mode: "start"` to start a continuous acquisition before a ramp
+- `mode: "stop"` to stop the continuous acquisition after a ramp
+
+For slower acquisitions, polling `GET /measurement-context` at about 1-5 Hz is
+adequate. For faster acquisitions, prefer timestamp-based offline merge of the
+electrical data and the cryostat context. See
+`docs/electrical_measurements.md` for more detail.
+
 Important: do not keep the same Mercury controller open in LabVIEW and Python at the same
 time. During live testing on 2026-05-11, the iPS at
 `TCPIP::172.31.109.116::7020::SOCKET` reset Python connections while the LabVIEW VI still

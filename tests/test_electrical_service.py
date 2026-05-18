@@ -7,20 +7,24 @@ from pathlib import Path
 from unittest import mock
 
 import httpx
+
 from teslatron_services.electrical.api import create_app
-from teslatron_services.electrical.config import CryostatEndpointConfig
-from teslatron_services.electrical.config import ElectricalServiceConfig
-from teslatron_services.electrical.config import InstrumentConfig
-from teslatron_services.electrical.config import MeasurementPlanConfig
-from teslatron_services.electrical.config import MeasurementSessionConfig
-from teslatron_services.electrical.config import MeasurementStepConfig
-from teslatron_services.electrical.config import PlanCompletionConfig
-from teslatron_services.electrical.config import PlanTriggerConfig
-from teslatron_services.electrical.config import config_from_mapping
+from teslatron_services.electrical.config import (
+    CryostatEndpointConfig,
+    ElectricalServiceConfig,
+    InstrumentConfig,
+    MeasurementPlanConfig,
+    MeasurementSessionConfig,
+    MeasurementStepConfig,
+    PlanCompletionConfig,
+    PlanTriggerConfig,
+    config_from_mapping,
+)
 from teslatron_services.electrical.orchestrator import ElectricalMeasurementService
-from teslatron_services.electrical.persistence import ElectricalCsvMeasurementWriter
-from teslatron_services.electrical.persistence import flatten_measurement
-from teslatron_services.electrical.state import MeasurementRunState
+from teslatron_services.electrical.persistence import (
+    ElectricalCsvMeasurementWriter,
+    flatten_measurement,
+)
 
 
 class FakeDriver:
@@ -50,7 +54,9 @@ class ElectricalServiceTests(unittest.IsolatedAsyncioTestCase):
     ) -> ElectricalMeasurementService:
         config = ElectricalServiceConfig(
             cryostat=CryostatEndpointConfig(),
-            measurement_session=MeasurementSessionConfig(save_dir=save_dir or "data/test-electrical"),
+            measurement_session=MeasurementSessionConfig(
+                save_dir=save_dir or "data/test-electrical"
+            ),
             instruments={"mock_meter": InstrumentConfig()},
             plans=plans or {},
         )
@@ -197,7 +203,10 @@ class ElectricalServiceTests(unittest.IsolatedAsyncioTestCase):
             service = self.make_service(save_dir=tmpdir)
             await service.start()
             try:
-                with mock.patch("teslatron_services.electrical.orchestrator.monotonic", side_effect=[10.0, 10.532]):
+                with mock.patch(
+                    "teslatron_services.electrical.orchestrator.monotonic",
+                    side_effect=[10.0, 10.532],
+                ):
                     await service.start_periodic_run(
                         run_id="timed_run",
                         instrument="mock_meter",
@@ -232,7 +241,9 @@ class ElectricalApiTests(unittest.IsolatedAsyncioTestCase):
 
     def test_create_app_loads_repo_config_by_default(self) -> None:
         app = create_app()
-        endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/config")
+        endpoint = next(
+            route.endpoint for route in app.routes if getattr(route, "path", None) == "/config"
+        )
         payload = asyncio.run(endpoint())
         self.assertIn("mock_meter", payload["instruments"])
         self.assertIn("iv_mock", payload["plans"])
@@ -368,7 +379,7 @@ class ElectricalCsvMeasurementWriterTests(unittest.TestCase):
             )
 
             rows = self._read_rows(path)
-            self.assertEqual(rows[0]["metadata"], "{\"range\":[1,2]}")
+            self.assertEqual(rows[0]["metadata"], '{"range":[1,2]}')
 
     def test_updates_schema_when_new_columns_appear(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

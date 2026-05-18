@@ -5,7 +5,7 @@ import signal
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Callable
+from typing import Annotated, Any, Callable, Literal
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -79,6 +79,14 @@ class RecipeRequest(BaseModel):
 class RecipeSignalRequest(BaseModel):
     signal: str
     message: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class ExternalMeasurementCompleteRequest(BaseModel):
+    request_signal: str
+    status: Literal["completed", "failed"]
+    message: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class RecipeRenameRequest(BaseModel):
@@ -89,9 +97,7 @@ async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
-async def permission_error_handler(
-    request: Request, exc: PermissionError
-) -> JSONResponse:
+async def permission_error_handler(request: Request, exc: PermissionError) -> JSONResponse:
     return JSONResponse(status_code=403, content={"detail": str(exc)})
 
 
@@ -144,6 +150,7 @@ def create_app(
         return {"status": "ok"}
 
     if service_config.enable_shutdown:
+
         @app.post("/shutdown")
         async def shutdown() -> dict[str, str]:
             if shutdown_callback is not None:
@@ -170,6 +177,10 @@ def create_app(
     @app.get("/state")
     async def get_state() -> dict:
         return service().state_snapshot()
+
+    @app.get("/measurement-context")
+    async def measurement_context() -> dict:
+        return service().measurement_context()
 
     @app.get("/recipes/status")
     async def recipe_status() -> dict:
@@ -212,7 +223,24 @@ def create_app(
 
     @app.post("/recipes/signal")
     async def signal_recipe(request: RecipeSignalRequest) -> dict:
-        return await service().signal_recipe(request.signal, request.message)
+        return await service().signal_recipe(
+            request.signal,
+            request.message,
+            metadata=request.metadata,
+        )
+
+    @app.get("/external-measurements/pending")
+    async def external_measurements_pending() -> dict:
+        return service().pending_external_measurement()
+
+    @app.post("/external-measurements/complete")
+    async def complete_external_measurement(request: ExternalMeasurementCompleteRequest) -> dict:
+        return await service().complete_external_measurement(
+            request.request_signal,
+            request.status,
+            request.message,
+            metadata=request.metadata,
+        )
 
     @app.post("/recipes/abort")
     async def abort_recipe() -> dict:

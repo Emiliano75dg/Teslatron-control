@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from teslatron_services.cryostat.backends import MercuryResource
-
 
 DEFAULT_COMMANDS = {
     "itc": [

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
-import json
 
 from .config import (
     load_and_validate_instruments,
@@ -85,7 +85,9 @@ def run_vdp_characterization_for_teslatron(
     if error is not None:
         report_payload["error"] = error
     report_json_path.write_text(json.dumps(report_payload, indent=2), encoding="utf-8")
-    report_md_path.write_text(_markdown_with_status(report, status, cryostat_snapshot, error), encoding="utf-8")
+    report_md_path.write_text(
+        _markdown_with_status(report, status, cryostat_snapshot, error), encoding="utf-8"
+    )
 
     return {
         "kind": "vdp_characterization",

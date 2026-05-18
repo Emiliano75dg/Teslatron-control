@@ -98,7 +98,23 @@ On 2026-05-11, the following were confirmed on the live system:
 - Keep the read-only config as the default inspection mode.
 - Switch to the control config only when you are ready to send commands.
 
-## 9. Heliox notes
+## 9. LabVIEW external-measurement handshake
+
+For external electrical measurements coordinated by LabVIEW, prefer the new
+HTTP handshake instead of parsing the full cryostat state ad hoc.
+
+Recommended endpoints:
+
+- `GET /measurement-context` for lightweight cryostat polling during acquisition
+- `GET /external-measurements/pending` for pending recipe requests
+- `POST /external-measurements/complete` to acknowledge `completed` or `failed`
+- `POST /recipes/signal` when a direct signal-based flow is preferred
+
+Recommended polling rate for LabVIEW is about 1-5 Hz for slow acquisitions.
+The payload uses explicit field names such as `sample_temperature_K` and
+`field_T`; do not depend on anonymous array ordering such as `[T, B]`.
+
+## 10. Heliox notes
 
 - For Heliox, use:
 

@@ -34,7 +34,7 @@ class ElectricalVdpConfigTests(unittest.TestCase):
                             "trigger": {"type": "recipe_signal", "signal": "measure_vdp"},
                             "steps": [{"instrument": "vdp", "action": "vdp_characterization"}],
                         }
-                    ]
+                    ],
                 }
             }
         )
@@ -52,7 +52,7 @@ class ElectricalVdpConfigTests(unittest.TestCase):
                                 "trigger": {"type": "recipe_signal", "signal": "measure_bad"},
                                 "steps": [{"instrument": "x", "action": "unknown_action"}],
                             }
-                        ]
+                        ],
                     }
                 }
             )
@@ -163,10 +163,7 @@ class ElectricalVdpIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(Path(result["report_json_path"]).exists())
             self.assertTrue(Path(result["report_md_path"]).exists())
             self.assertGreater(len(result["records"]), 0)
-            self.assertTrue(
-                result["sheet_resistance_ohm_per_sq"] is not None
-                or result["flags"]
-            )
+            self.assertTrue(result["sheet_resistance_ohm_per_sq"] is not None or result["flags"])
 
     async def test_trigger_recipe_signal_measure_vdp_completes_in_dry_run(self) -> None:
         notifications = []
@@ -206,10 +203,7 @@ class ElectricalVdpIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
             result = run["last_event"]
             self.assertEqual(result["kind"], "vdp_characterization")
-            self.assertTrue(
-                result["sheet_resistance_ohm_per_sq"] is not None
-                or result["flags"]
-            )
+            self.assertTrue(result["sheet_resistance_ohm_per_sq"] is not None or result["flags"])
 
     async def test_stop_run_interrupts_vdp_dry_run_safely(self) -> None:
         notifications = []

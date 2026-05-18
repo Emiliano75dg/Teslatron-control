@@ -60,7 +60,7 @@ def solve_sheet_resistance(
 
     # Van der Pauw linear approximation: Rs ≈ (π/ln(2)) * mean(Ra, Rb)
     approximation = pi / _ln2() * mean([r_a_ohm, r_b_ohm])
-    
+
     # Bracket the root: set initial bounds with safety factors
     # Low bound: 1e-12 of the smaller resistance
     # High bound: 10× the linear approximation
@@ -116,18 +116,18 @@ def solve_sheet_resistance(
 
 def reciprocity_error(forward_ohm: float, reciprocal_ohm: float) -> float:
     """Calculate reciprocity error |R(+I) - R(-I)| / mean(|R|).
-    
+
     Measures how well the forward and reverse current resistances match.
     Ideally < 5% for good Ohmic behavior (symmetric contacts).
     High values indicate non-linear effects or asymmetric contacts.
-    
+
     Args:
         forward_ohm: Resistance measured with positive current (+I).
         reciprocal_ohm: Resistance measured with negative current (-I).
-        
+
     Returns:
         Reciprocity error as normalized difference [0, inf).
-        
+
     Raises:
         ValueError: If both inputs are zero (denominator = 0).
     """
@@ -139,17 +139,17 @@ def reciprocity_error(forward_ohm: float, reciprocal_ohm: float) -> float:
 
 def rotation_spread(resistances_ohm: list[float]) -> float:
     """Calculate anisotropy spread: std(R) / mean(|R|).
-    
+
     For isotropic films, all contact pair resistance values should be similar.
     This metric quantifies the spread (anisotropy or non-uniformity).
     Ideally < 10% for uniform isotropic films.
-    
+
     Args:
         resistances_ohm: List of resistance values to assess.
-        
+
     Returns:
         Normalized standard deviation (rotation spread) [0, inf).
-        
+
     Raises:
         ValueError: If list is empty or all values are zero.
     """
@@ -163,18 +163,18 @@ def rotation_spread(resistances_ohm: list[float]) -> float:
 
 def vdp_asymmetry(r_a_ohm: float, r_b_ohm: float) -> float:
     """Calculate Van der Pauw asymmetry |Ra - Rb| / mean(|Ra|, |Rb|).
-    
+
     Perfect Van der Pauw geometry has equal characteristic resistances (Ra = Rb).
     This metric quantifies deviation from ideal geometry.
     Values << 1 indicate good Van der Pauw symmetry.
-    
+
     Args:
         r_a_ohm: Resistance from pair (A,B) measuring voltage at (C,D).
         r_b_ohm: Resistance from pair (C,D) measuring voltage at (A,B).
-        
+
     Returns:
         Normalized asymmetry [0, inf).
-        
+
     Raises:
         ValueError: If both inputs are zero.
     """

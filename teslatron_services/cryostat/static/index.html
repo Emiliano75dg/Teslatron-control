@@ -367,6 +367,7 @@
                   <option value="ramp_to_zero">B to zero</option>
                   <option value="wait">Timed wait</option>
                   <option value="signal">Wait signal</option>
+                  <option value="external_measurement">External measurement</option>
                 </select>
               </label>
               <label class="recipe-temperature-input">Loop
@@ -406,6 +407,28 @@
               <label class="recipe-signal-input">Message
                 <input id="recipeNotice" type="text" value="Continue when ready">
               </label>
+              <label class="recipe-external-input hidden">Mode
+                <select id="recipeExternalMode">
+                  <option value="point">Point</option>
+                  <option value="start">Start</option>
+                  <option value="stop">Stop</option>
+                </select>
+              </label>
+              <label class="recipe-external-input hidden">Request signal
+                <input id="recipeExternalRequestSignal" type="text" value="measure_iv">
+              </label>
+              <label class="recipe-external-input hidden">Completion signal
+                <input id="recipeExternalCompletionSignal" type="text" value="measure_iv.completed">
+              </label>
+              <label class="recipe-external-input hidden">Failure signal
+                <input id="recipeExternalFailureSignal" type="text" value="measure_iv.failed">
+              </label>
+              <label class="recipe-external-input hidden">Timeout s
+                <input id="recipeExternalTimeoutS" type="number" step="1" min="1" value="600">
+              </label>
+              <label class="recipe-external-input hidden">Message
+                <input id="recipeExternalMessage" type="text" value="Run external measurement">
+              </label>
               <button id="addRecipeStepButton" class="ghost" type="button">Add</button>
             </div>
             <ol id="recipeSteps" class="recipe-steps"></ol>
@@ -424,6 +447,11 @@
               <dt>Status</dt><dd id="recipeStatus">--</dd>
               <dt>Step</dt><dd id="recipeStep">--</dd>
               <dt>Message</dt><dd id="recipeMessageDetail">--</dd>
+              <dt>External mode</dt><dd id="recipeExternalModeDetail">--</dd>
+              <dt>Request signal</dt><dd id="recipeExternalRequestSignalDetail">--</dd>
+              <dt>Completion signal</dt><dd id="recipeExternalCompletionSignalDetail">--</dd>
+              <dt>Failure signal</dt><dd id="recipeExternalFailureSignalDetail">--</dd>
+              <dt>Timeout</dt><dd id="recipeExternalTimeoutDetail">--</dd>
             </dl>
           </article>
         </div>

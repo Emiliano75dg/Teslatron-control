@@ -1,29 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
-from datetime import timezone
+import json
 import logging
-from pathlib import Path
-from time import monotonic
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from time import monotonic, time
 from time import sleep as blocking_sleep
-from time import time
 from typing import Any, Awaitable, Callable
 from urllib.request import Request, urlopen
-import json
 
-from .config import ElectricalServiceConfig
-from .config import InstrumentConfig
-from .config import MeasurementPlanConfig
-from .persistence import ElectricalCsvMeasurementWriter
-from .persistence import flatten_measurement
+from .config import ElectricalServiceConfig, InstrumentConfig, MeasurementPlanConfig
 from .drivers.base import ElectricalInstrumentDriver
 from .drivers.mock import MockElectricalDriver
-from .persistence import JsonlMeasurementWriter
-from .state import CryostatCacheState
-from .state import ElectricalServiceState
-from .state import MeasurementRunState
+from .persistence import ElectricalCsvMeasurementWriter, JsonlMeasurementWriter, flatten_measurement
+from .state import CryostatCacheState, ElectricalServiceState, MeasurementRunState
 from .vdp import run_vdp_characterization_for_teslatron
 
 logger = logging.getLogger(__name__)
@@ -62,7 +53,9 @@ class ElectricalMeasurementService:
         self._stop_event.clear()
         self._run_stop_event.clear()
         if getattr(self._executor, "_shutdown", False):
-            self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="electrical-service")
+            self._executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="electrical-service"
+            )
         for instrument in self._instruments.values():
             instrument.connect()
         await self.refresh_cryostat_state()
@@ -249,7 +242,9 @@ class ElectricalMeasurementService:
                 if require_safe_to_measure and not self._safe_to_measure():
                     await self._run_blocking(blocking_sleep, min(run.interval_s, 0.5))
                     continue
-                event = await self._acquire_measurement(run.instrument, run.run_id, run.plan_id or "periodic")
+                event = await self._acquire_measurement(
+                    run.instrument, run.run_id, run.plan_id or "periodic"
+                )
                 run.points_acquired += 1
                 run.last_event = event
                 if run.max_points is not None and run.points_acquired >= run.max_points:
@@ -267,7 +262,7 @@ class ElectricalMeasurementService:
             run.status = "error"
             run.error = str(exc)
             run.stopped_at = time()
-    
+
     async def _execute_recipe_plan(
         self,
         plan: MeasurementPlanConfig,
