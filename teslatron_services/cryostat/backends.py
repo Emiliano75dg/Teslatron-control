@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import logging
 import re
 import socket
 import threading
@@ -28,6 +29,8 @@ from .state import (
 
 LOW_FIELD_RATE_LIMIT_T_PER_MIN = 0.15
 LOW_FIELD_RATE_WINDOW_T = 1.0
+
+logger = logging.getLogger(__name__)
 
 
 class CryostatBackend(ABC):
@@ -525,10 +528,12 @@ class MercuryResource:
     def _close_socket_connection(self) -> None:
         if self.socket_connection is None:
             return
+        connection = self.socket_connection
+        self.socket_connection = None
         try:
-            self.socket_connection.close()
-        finally:
-            self.socket_connection = None
+            connection.close()
+        except OSError:
+            logger.warning("Error closing Mercury socket connection for %s", self.address)
 
     def _respect_message_interval(self) -> None:
         elapsed = monotonic() - self._last_socket_query_at
@@ -537,16 +542,25 @@ class MercuryResource:
 
     def close(self) -> None:
         self._close_socket_connection()
-        if self.instrument is not None:
+        address = getattr(self, "address", "<unknown>")
+        instrument = self.instrument
+        self.instrument = None
+        if instrument is not None:
             try:
-                self.instrument.close()
-            finally:
-                self.instrument = None
-        if self.resource_manager is not None:
+                instrument.close()
+            except Exception as exc:
+                logger.warning("Error closing Mercury instrument for %s: %s", address, exc)
+        resource_manager = self.resource_manager
+        self.resource_manager = None
+        if resource_manager is not None:
             try:
-                self.resource_manager.close()
-            finally:
-                self.resource_manager = None
+                resource_manager.close()
+            except Exception as exc:
+                logger.warning(
+                    "Error closing VISA resource manager for %s: %s",
+                    address,
+                    exc,
+                )
 
     @staticmethod
     def _parse_socket_address(address: str) -> tuple[str, int] | None:
@@ -1877,4 +1891,5 @@ def list_visa_resources() -> dict:
         resource_manager = pyvisa.ResourceManager()
         return {"ok": True, "resources": list(resource_manager.list_resources())}
     except Exception as exc:
+        logger.warning("Failed to list VISA resources: %s", exc)
         return {"ok": False, "error": str(exc)}

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from datetime import timezone
+import logging
 from pathlib import Path
+from time import monotonic
 from time import sleep as blocking_sleep
 from time import time
 from typing import Any, Awaitable, Callable
@@ -11,6 +16,8 @@ import json
 from .config import ElectricalServiceConfig
 from .config import InstrumentConfig
 from .config import MeasurementPlanConfig
+from .persistence import ElectricalCsvMeasurementWriter
+from .persistence import flatten_measurement
 from .drivers.base import ElectricalInstrumentDriver
 from .drivers.mock import MockElectricalDriver
 from .persistence import JsonlMeasurementWriter
@@ -18,6 +25,8 @@ from .state import CryostatCacheState
 from .state import ElectricalServiceState
 from .state import MeasurementRunState
 from .vdp import run_vdp_characterization_for_teslatron
+
+logger = logging.getLogger(__name__)
 
 CryostatFetcher = Callable[[], Awaitable[dict[str, Any]]]
 RecipeNotifier = Callable[[str, str | None], Awaitable[dict[str, Any]]]
@@ -36,12 +45,14 @@ class ElectricalMeasurementService:
         self._cryostat_fetcher = cryostat_fetcher or self._default_cryostat_fetcher
         self._recipe_notifier = recipe_notifier or self._default_recipe_notifier
         self._writer = JsonlMeasurementWriter(config.measurement_session.save_dir)
+        self._csv_writer = ElectricalCsvMeasurementWriter(config.measurement_session.save_dir)
         self._state = ElectricalServiceState()
         self._stop_event = asyncio.Event()
         self._run_stop_event = asyncio.Event()
         self._resource_lock = asyncio.Lock()
         self._poll_task: asyncio.Task[None] | None = None
         self._run_task: asyncio.Task[None] | None = None
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="electrical-service")
         self._instruments = instruments or {
             name: _build_driver(instrument_config)
             for name, instrument_config in config.instruments.items()
@@ -50,6 +61,8 @@ class ElectricalMeasurementService:
     async def start(self) -> None:
         self._stop_event.clear()
         self._run_stop_event.clear()
+        if getattr(self._executor, "_shutdown", False):
+            self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="electrical-service")
         for instrument in self._instruments.values():
             instrument.connect()
         await self.refresh_cryostat_state()
@@ -63,6 +76,7 @@ class ElectricalMeasurementService:
             self._poll_task = None
         for instrument in self._instruments.values():
             instrument.shutdown()
+        self._executor.shutdown(wait=True, cancel_futures=True)
 
     def config_snapshot(self) -> dict[str, Any]:
         payload = self.config.to_dict()
@@ -119,6 +133,7 @@ class ElectricalMeasurementService:
                 snapshot=snapshot,
             )
         except Exception as exc:
+            logger.warning("Failed to refresh cryostat state: %s", exc)
             self._state.cryostat.connected = False
             self._state.cryostat.last_error = str(exc)
             self._state.cryostat.last_fetch_at = time()
@@ -142,6 +157,7 @@ class ElectricalMeasurementService:
             raise ValueError("A measurement run is already active")
 
         self._run_stop_event = asyncio.Event()
+        csv_path = self._csv_writer.begin_run(run_id)
         self._state.run = MeasurementRunState(
             status="running",
             run_id=run_id,
@@ -150,7 +166,13 @@ class ElectricalMeasurementService:
             interval_s=interval_s,
             max_points=max_points,
             started_at=time(),
+            run_start_monotonic_s=monotonic(),
             output_path=str(self._writer.run_path(run_id)),
+            electrical_csv_path=str(csv_path),
+            output_paths={
+                "jsonl": str(self._writer.run_path(run_id)),
+                "electrical_csv": str(csv_path),
+            },
         )
         self._run_task = asyncio.create_task(
             self._periodic_run_loop(
@@ -172,6 +194,7 @@ class ElectricalMeasurementService:
         run_id = _recipe_run_id(plan.id, signal)
         primary_instrument = plan.steps[0].instrument
         self._run_stop_event = asyncio.Event()
+        csv_path = self._csv_writer.begin_run(run_id)
         self._state.run = MeasurementRunState(
             status="running",
             run_id=run_id,
@@ -179,7 +202,13 @@ class ElectricalMeasurementService:
             plan_id=plan.id,
             trigger_signal=signal,
             started_at=time(),
+            run_start_monotonic_s=monotonic(),
             output_path=str(self._writer.run_path(run_id)),
+            electrical_csv_path=str(csv_path),
+            output_paths={
+                "jsonl": str(self._writer.run_path(run_id)),
+                "electrical_csv": str(csv_path),
+            },
         )
         self._run_task = asyncio.create_task(
             self._execute_recipe_plan(plan, signal, message),
@@ -218,7 +247,7 @@ class ElectricalMeasurementService:
             while not self._run_stop_event.is_set():
                 await self.refresh_cryostat_state()
                 if require_safe_to_measure and not self._safe_to_measure():
-                    await asyncio.to_thread(blocking_sleep, min(run.interval_s, 0.5))
+                    await self._run_blocking(blocking_sleep, min(run.interval_s, 0.5))
                     continue
                 event = await self._acquire_measurement(run.instrument, run.run_id, run.plan_id or "periodic")
                 run.points_acquired += 1
@@ -229,11 +258,12 @@ class ElectricalMeasurementService:
                     self._run_stop_event.set()
                     break
                 if run.max_points is None:
-                    await asyncio.to_thread(blocking_sleep, run.interval_s)
+                    await self._run_blocking(blocking_sleep, run.interval_s)
             if run.status == "running":
                 run.status = "stopped"
                 run.stopped_at = time()
         except Exception as exc:
+            logger.exception("Electrical periodic run failed")
             run.status = "error"
             run.error = str(exc)
             run.stopped_at = time()
@@ -272,6 +302,7 @@ class ElectricalMeasurementService:
                 run.last_event = last_event
                 if last_event.get("csv_path"):
                     run.output_path = str(last_event["csv_path"])
+                    run.output_paths["csv"] = str(last_event["csv_path"])
             run.status = "completed"
             run.stopped_at = time()
             await self._notify_plan_completion(plan, signal, "completed", message)
@@ -281,6 +312,7 @@ class ElectricalMeasurementService:
             await self._notify_plan_completion(plan, signal, "aborted", message)
             raise
         except Exception as exc:
+            logger.exception("Electrical recipe plan failed")
             run.status = "error"
             run.error = str(exc)
             run.stopped_at = time()
@@ -294,23 +326,39 @@ class ElectricalMeasurementService:
     ) -> dict[str, Any]:
         async with self._resource_lock:
             driver = self._instruments[instrument_name]
-            payload = await asyncio.to_thread(driver.measure)
+            payload = await self._run_blocking(driver.measure)
+            timestamp_unix_s = time()
+            cryostat = self._cryostat_summary()
             event = {
-                "timestamp": time(),
+                "timestamp": timestamp_unix_s,
                 "run_id": run_id,
                 "plan_id": plan_id,
                 "instrument": instrument_name,
                 "measurement": payload,
-                "cryostat": self._cryostat_summary(),
+                "cryostat": cryostat,
             }
-            path = await asyncio.to_thread(self._writer.append_event, run_id, event)
-            self._state.run.output_path = str(path)
+            jsonl_path = await self._run_blocking(self._writer.append_event, run_id, event)
+            csv_row = self._build_csv_row(
+                run_id=run_id,
+                plan_id=plan_id,
+                instrument_name=instrument_name,
+                timestamp_unix_s=timestamp_unix_s,
+                measurement=payload,
+                cryostat=cryostat,
+            )
+            csv_path = await self._run_blocking(self._csv_writer.append_row, run_id, csv_row)
+            event["jsonl_path"] = str(jsonl_path)
+            event["electrical_csv_path"] = str(csv_path)
+            self._state.run.output_path = str(jsonl_path)
+            self._state.run.electrical_csv_path = str(csv_path)
+            self._state.run.output_paths["jsonl"] = str(jsonl_path)
+            self._state.run.output_paths["electrical_csv"] = str(csv_path)
             return event
 
     async def _run_vdp_characterization(self, *, run_id: str) -> dict[str, Any]:
         output_dir = self._writer.run_path(run_id).parent
         async with self._resource_lock:
-            return await asyncio.to_thread(
+            return await self._run_blocking(
                 run_vdp_characterization_for_teslatron,
                 config=self.config.vdp,
                 run_id=run_id,
@@ -337,6 +385,44 @@ class ElectricalMeasurementService:
             "pressure_mbar": pressure.get("mbar"),
             "safe_to_measure": safety.get("safe_to_measure", False),
         }
+
+    def _build_csv_row(
+        self,
+        *,
+        run_id: str,
+        plan_id: str,
+        instrument_name: str,
+        timestamp_unix_s: float,
+        measurement: dict[str, Any],
+        cryostat: dict[str, Any],
+    ) -> dict[str, Any]:
+        started_monotonic = self._state.run.run_start_monotonic_s
+        time_relative_s = 0.0 if started_monotonic is None else monotonic() - started_monotonic
+        row: dict[str, Any] = {
+            "run_id": run_id,
+            "plan_id": plan_id,
+            "instrument": instrument_name,
+            "timestamp_unix_s": timestamp_unix_s,
+            "timestamp_iso": _timestamp_iso_utc(timestamp_unix_s),
+            "time_relative_s": time_relative_s,
+            "sample_temperature_K": cryostat.get("sample_temperature_K"),
+            "field_T": cryostat.get("field_T"),
+            "safe_to_measure": cryostat.get("safe_to_measure"),
+            "vti_temperature_K": cryostat.get("vti_temperature_K"),
+            "pressure_mbar": cryostat.get("pressure_mbar"),
+            "cryostat_timestamp": cryostat.get("timestamp"),
+        }
+        for key, value in flatten_measurement(measurement).items():
+            target_key = key if key not in row else f"measurement_{key}"
+            row[target_key] = value
+        return row
+
+    async def _run_blocking(self, func: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            lambda: func(*args, **kwargs),
+        )
 
     def _safe_to_measure(self) -> bool:
         if not self._state.cryostat.connected:
@@ -376,14 +462,14 @@ class ElectricalMeasurementService:
         await self._recipe_notifier(completion_signal, full_message)
 
     async def _default_cryostat_fetcher(self) -> dict[str, Any]:
-        return await asyncio.to_thread(self._load_cryostat_state_blocking)
+        return await self._run_blocking(self._load_cryostat_state_blocking)
 
     async def _default_recipe_notifier(
         self,
         signal: str,
         message: str | None,
     ) -> dict[str, Any]:
-        return await asyncio.to_thread(self._post_recipe_signal_blocking, signal, message)
+        return await self._run_blocking(self._post_recipe_signal_blocking, signal, message)
 
     def _load_cryostat_state_blocking(self) -> dict[str, Any]:
         with urlopen(
@@ -422,3 +508,11 @@ def _result_point_count(result: dict[str, Any]) -> int:
     if isinstance(records, list):
         return len(records)
     return 1
+
+
+def _timestamp_iso_utc(timestamp_unix_s: float) -> str:
+    return (
+        datetime.fromtimestamp(timestamp_unix_s, tz=timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )

@@ -1,7 +1,10 @@
 import asyncio
+import tempfile
 import time
 import unittest
+from pathlib import Path
 
+import httpx
 from teslatron_services.cryostat.api import create_app
 from teslatron_services.cryostat.config import CryostatServiceConfig
 from teslatron_services.cryostat.config import InsertCapabilitiesConfig
@@ -293,7 +296,67 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(service.recipe_status()["status"], "aborted")
 
 
-class CryostatApiTests(unittest.TestCase):
+class CryostatRecipeStorageTests(unittest.IsolatedAsyncioTestCase):
+    def make_service(self, recipe_dir: str, *, read_only: bool = False) -> CryostatService:
+        config = CryostatServiceConfig(
+            backend="mock",
+            read_only=read_only,
+            recipe_dir=recipe_dir,
+        )
+        return CryostatService(config, backend=FakeBackend())
+
+    async def test_recipe_paths_stay_within_recipe_dir_for_malicious_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = self.make_service(tmpdir)
+            recipe_dir = Path(tmpdir).resolve()
+
+            for value in ["../../x", "..\\x", "", "a" * 300, "Misura \u03bc", "folder/name"]:
+                output_path = service._recipe_output_path(value)
+                self.assertEqual(output_path.parent, recipe_dir)
+                self.assertTrue(output_path.name.endswith(".json"))
+
+            with self.assertRaisesRegex(ValueError, "Unknown saved recipe"):
+                service._recipe_file_path("../../x")
+
+    async def test_save_recipe_does_not_overwrite_without_explicit_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = self.make_service(tmpdir)
+            recipe = {"name": "IV Sweep", "steps": [{"type": "wait", "duration_s": 0.01}]}
+
+            saved = await service.save_recipe(recipe)
+            self.assertEqual(saved["name"], "IV Sweep")
+
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                await service.save_recipe(recipe)
+
+            overwritten = await service.save_recipe(
+                {"name": "IV Sweep", "steps": [{"type": "wait", "duration_s": 0.02}]},
+                overwrite=True,
+            )
+            self.assertEqual(overwritten["name"], "IV Sweep")
+
+            payload = service.load_saved_recipe("iv_sweep")
+            self.assertEqual(payload["steps"][0]["duration_s"], 0.02)
+
+    async def test_load_saved_recipe_handles_unicode_and_slashes_safely(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = self.make_service(tmpdir)
+            summary = await service.save_recipe(
+                {"name": "Prova/\u03bc sweep", "steps": [{"type": "wait", "duration_s": 0.01}]}
+            )
+
+            payload = service.load_saved_recipe(summary["id"])
+
+            self.assertEqual(payload["name"], "Prova/\u03bc sweep")
+            self.assertEqual(payload["steps"][0]["type"], "wait")
+
+
+class CryostatApiTests(unittest.IsolatedAsyncioTestCase):
+    def _app_for_service(self, service: CryostatService):
+        app = create_app(config=service.config)
+        app.state.cryostat = service
+        return app
+
     def test_create_app_loads_repo_config_by_default(self) -> None:
         app = create_app()
         endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/config")
@@ -301,6 +364,115 @@ class CryostatApiTests(unittest.TestCase):
         self.assertEqual(payload["backend"], "mercury")
         self.assertTrue(payload["read_only"])
         self.assertEqual(payload["active_insert"], "fisher_probe")
+
+    async def test_health_state_and_recipes_endpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = CryostatService(
+                CryostatServiceConfig(backend="mock", recipe_dir=tmpdir),
+                backend=FakeBackend(),
+            )
+            app = self._app_for_service(service)
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                save_response = await client.post(
+                    "/recipes/save",
+                    json={"name": "api recipe", "steps": [{"type": "wait", "duration_s": 0.01}]},
+                )
+                self.assertEqual(save_response.status_code, 200)
+
+                health = await client.get("/health")
+                state = await client.get("/state")
+                recipes = await client.get("/recipes")
+
+                self.assertEqual(health.status_code, 200)
+                self.assertEqual(health.json(), {"status": "ok"})
+                self.assertEqual(state.status_code, 200)
+                self.assertEqual(recipes.status_code, 200)
+                self.assertEqual(recipes.json()["recipes"][0]["name"], "api recipe")
+
+    async def test_recipes_save_returns_403_in_read_only_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = CryostatService(
+                CryostatServiceConfig(backend="mock", recipe_dir=tmpdir, read_only=True),
+                backend=FakeBackend(),
+            )
+            app = self._app_for_service(service)
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                response = await client.post(
+                    "/recipes/save",
+                    json={"name": "blocked", "steps": [{"type": "wait", "duration_s": 0.01}]},
+                )
+
+            self.assertEqual(response.status_code, 403)
+            self.assertIn("read-only mode", response.json()["detail"])
+
+    async def test_recipes_save_returns_400_for_duplicate_without_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = CryostatService(
+                CryostatServiceConfig(backend="mock", recipe_dir=tmpdir),
+                backend=FakeBackend(),
+            )
+            app = self._app_for_service(service)
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                payload = {"name": "duplicate", "steps": [{"type": "wait", "duration_s": 0.01}]}
+                self.assertEqual((await client.post("/recipes/save", json=payload)).status_code, 200)
+                response = await client.post("/recipes/save", json=payload)
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("already exists", response.json()["detail"])
+
+    async def test_diagnostics_query_returns_400_for_invalid_command(self) -> None:
+        service = CryostatService(CryostatServiceConfig(backend="mock"), backend=FakeBackend())
+        app = self._app_for_service(service)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/diagnostics/query",
+                json={"target": "itc", "command": "SET:DEV:BAD"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("only allows READ", response.json()["detail"])
+
+    async def test_diagnostics_catalog_returns_502_for_backend_failure(self) -> None:
+        async def fail_catalog() -> dict:
+            raise RuntimeError("catalog unavailable")
+
+        service = CryostatService(CryostatServiceConfig(backend="mock"), backend=FakeBackend())
+        service.catalog = fail_catalog
+        app = self._app_for_service(service)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/diagnostics/catalog")
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["detail"], "catalog unavailable")
+
+    def test_shutdown_route_is_disabled_by_default(self) -> None:
+        app = create_app(config=CryostatServiceConfig())
+
+        shutdown_routes = [route for route in app.routes if getattr(route, "path", None) == "/shutdown"]
+
+        self.assertEqual(shutdown_routes, [])
+
+    def test_shutdown_route_calls_callback_when_enabled(self) -> None:
+        called = {"value": 0}
+
+        def shutdown_callback() -> None:
+            called["value"] += 1
+
+        app = create_app(
+            config=CryostatServiceConfig(enable_shutdown=True),
+            shutdown_callback=shutdown_callback,
+        )
+
+        endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/shutdown")
+        payload = asyncio.run(endpoint())
+
+        self.assertEqual(payload, {"status": "shutting_down"})
+        self.assertEqual(called["value"], 1)
 
 
 class CryostatConfigTests(unittest.TestCase):
@@ -416,6 +588,52 @@ class CryostatConfigTests(unittest.TestCase):
                                 "default_sample_sensor": "sensor_a",
                             }
                         },
+                    }
+                }
+            )
+
+    def test_invalid_poll_interval_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "poll_interval_s must be > 0"):
+            CryostatServiceConfig(poll_interval_s=0)
+
+    def test_invalid_log_interval_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "log_interval_s must be >= 0"):
+            CryostatServiceConfig(log_interval_s=-1)
+
+    def test_active_insert_must_exist(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unknown active_insert"):
+            CryostatServiceConfig(
+                active_insert="missing",
+                insert_profiles={"known": InsertProfileConfig()},
+            )
+
+    def test_active_sample_sensor_must_exist(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unknown active_sample_sensor"):
+            CryostatServiceConfig(
+                active_insert="probe_a",
+                insert_profiles={"probe_a": InsertProfileConfig()},
+                active_sample_sensor="missing",
+            )
+
+    def test_safety_temperature_range_must_be_coherent(self) -> None:
+        with self.assertRaisesRegex(ValueError, "min_temperature_K cannot exceed max_temperature_K"):
+            config_from_mapping(
+                {
+                    "cryostat": {
+                        "safety": {
+                            "min_temperature_K": 10.0,
+                            "max_temperature_K": 5.0,
+                        }
+                    }
+                }
+            )
+
+    def test_itc_timeout_must_be_positive(self) -> None:
+        with self.assertRaisesRegex(ValueError, "ITC timeout_ms must be > 0"):
+            config_from_mapping(
+                {
+                    "cryostat": {
+                        "itc": {"timeout_ms": 0},
                     }
                 }
             )

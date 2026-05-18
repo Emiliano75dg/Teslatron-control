@@ -31,6 +31,12 @@ async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
+def _model_payload(model: BaseModel) -> dict:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    return model.dict()
+
+
 def create_app(
     config: ElectricalServiceConfig | None = None,
     service_factory: Callable[[ElectricalServiceConfig], ElectricalMeasurementService] | None = None,
@@ -94,7 +100,8 @@ def create_app(
 
     @app.post("/plans/recipe-signal")
     async def recipe_signal(request: RecipeSignalRequest) -> dict:
-        return await service().trigger_recipe_signal(request.signal, request.message)
+        payload = _model_payload(request)
+        return await service().trigger_recipe_signal(payload["signal"], payload.get("message"))
 
     @app.get("/results/latest")
     async def latest_result() -> dict:
