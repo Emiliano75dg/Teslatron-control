@@ -25,6 +25,13 @@ Optional analysis tools for working with exported data afterwards:
 pip install numpy pandas matplotlib
 ```
 
+The repository also includes small standalone utilities under `tools/`. For
+example, you can inspect cryostat environment CSV logs with:
+
+```bash
+python3 tools/inspect_environment_log.py data/cryostat_environment_YYYY-MM-DD.csv
+```
+
 For PyVisa to work, you will need to install the [National Instruments VISA library](https://pyvisa.readthedocs.io/en/latest/faq/getting_nivisa.html#faq-getting-nivisa).
 
 ## Lab cryostat service
