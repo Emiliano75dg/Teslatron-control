@@ -543,6 +543,58 @@ class MercuryResourceSocketTests(unittest.TestCase):
         self.assertEqual(response, "STAT:DEV:TEST:OK\r\n")
         self.assertEqual(fake_socket.sent, [b"READ:TEST\n"])
 
+    def test_close_is_idempotent_for_socket_resource(self) -> None:
+        class FakeSocket:
+            def __init__(self):
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+
+        fake_socket = FakeSocket()
+        resource = MercuryResource.__new__(MercuryResource)
+        resource.socket_connection = fake_socket
+        resource.instrument = None
+        resource.resource_manager = None
+
+        MercuryResource.close(resource)
+        MercuryResource.close(resource)
+
+        self.assertEqual(fake_socket.close_calls, 1)
+        self.assertIsNone(resource.socket_connection)
+
+    def test_close_attempts_instrument_and_resource_manager_once(self) -> None:
+        class FakeInstrument:
+            def __init__(self):
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+                raise RuntimeError("instrument close failed")
+
+        class FakeResourceManager:
+            def __init__(self):
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+                raise RuntimeError("rm close failed")
+
+        instrument = FakeInstrument()
+        resource_manager = FakeResourceManager()
+        resource = MercuryResource.__new__(MercuryResource)
+        resource.socket_connection = None
+        resource.instrument = instrument
+        resource.resource_manager = resource_manager
+
+        MercuryResource.close(resource)
+        MercuryResource.close(resource)
+
+        self.assertEqual(instrument.close_calls, 1)
+        self.assertEqual(resource_manager.close_calls, 1)
+        self.assertIsNone(resource.instrument)
+        self.assertIsNone(resource.resource_manager)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -56,6 +56,10 @@ curl http://127.0.0.1:8765/state
 curl http://127.0.0.1:8765/diagnostics/readings
 ```
 
+Saved recipes are kept under the configured `recipe_dir`. The `/recipes/save`
+endpoint now defaults to safe behavior and will not overwrite an existing
+recipe unless `overwrite=true` is provided explicitly in the JSON payload.
+
 Important: do not keep the same Mercury controller open in LabVIEW and Python at the same
 time. During live testing on 2026-05-11, the iPS at
 `TCPIP::172.31.109.116::7020::SOCKET` reset Python connections while the LabVIEW VI still
@@ -113,6 +117,36 @@ Current Heliox model:
 
 The backend is implemented and locally tested; full end-to-end validation through the GUI
 should still be done on the instrument in the lab before relying on it operationally.
+
+## Electrical measurement outputs
+
+Simple electrical runs now produce two complementary files under `data/electrical/YYYY-MM-DD/`:
+
+- JSONL event log for machine-oriented replay and debugging
+- per-run CSV for direct scientific analysis
+
+The tabular CSV is saved in a dedicated run directory:
+
+```text
+data/electrical/YYYY-MM-DD/<run_id>/<run_id>_electrical.csv
+```
+
+It includes one row per electrical measurement with explicit columns for:
+
+- run metadata: `run_id`, `plan_id`, `instrument`
+- time axes: `timestamp_unix_s`, `timestamp_iso`, `time_relative_s`
+- cryostat context: `sample_temperature_K`, `field_T`, `safe_to_measure`
+- optional cryostat extras when available: `vti_temperature_K`, `pressure_mbar`, `cryostat_timestamp`
+- flattened electrical payload fields from the instrument measurement
+
+`timestamp_iso` is written in UTC with a trailing `Z`. `time_relative_s` is computed from
+`time.monotonic()` at run start, so it is stable even if the system clock changes.
+
+For a fuller description and an example row, see:
+
+```text
+docs/electrical_measurements.md
+```
 
 ## Maintainer
 

@@ -2,6 +2,7 @@
   "cryostat": {
     "backend": "heliox",
     "read_only": false,
+    "enable_shutdown": true,
     "active_insert": "heliox_probe",
     "poll_interval_s": 1.0,
     "log_interval_s": 20.0,

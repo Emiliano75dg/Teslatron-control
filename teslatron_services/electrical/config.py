@@ -15,6 +15,14 @@ class CryostatEndpointConfig:
     poll_interval_s: float = 1.0
     stale_after_s: float = 5.0
 
+    def __post_init__(self) -> None:
+        if self.timeout_s <= 0:
+            raise ValueError("Electrical cryostat timeout_s must be > 0")
+        if self.poll_interval_s <= 0:
+            raise ValueError("Electrical cryostat poll_interval_s must be > 0")
+        if self.stale_after_s <= 0:
+            raise ValueError("Electrical cryostat stale_after_s must be > 0")
+
 
 @dataclass(slots=True)
 class MeasurementSessionConfig:
@@ -84,8 +92,21 @@ class ElectricalServiceConfig:
     vdp: VdpConfig = field(default_factory=VdpConfig)
     plans: dict[str, MeasurementPlanConfig] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        self.validate()
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    def validate(self) -> None:
+        instrument_names = set(self.instruments)
+        for plan_id, plan in self.plans.items():
+            for step in plan.steps:
+                if step.instrument not in instrument_names:
+                    raise ValueError(
+                        f"Electrical plan {plan_id!r} references unknown instrument "
+                        f"{step.instrument!r}"
+                    )
 
 
 def load_config(path: str | Path | None = None) -> ElectricalServiceConfig:

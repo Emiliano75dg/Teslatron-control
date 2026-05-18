@@ -147,11 +147,10 @@ class SocketTransport:
             socket.timeout: Command timeout (after max_retries attempts).
             OSError: Other network errors.
         """
-        logger.debug(f"SCPI write: {command}")
-        
         for attempt in range(1, self._max_retries + 2):
             try:
                 self._socket.sendall(command.encode("ascii") + self._termination)
+                logger.debug("SCPI write succeeded: %s", command)
                 return
             except socket.timeout as e:
                 if attempt <= self._max_retries:
@@ -193,8 +192,6 @@ class SocketTransport:
             ValueError: Received empty or malformed response.
             OSError: Other network errors.
         """
-        logger.debug(f"SCPI query: {command}")
-        
         for attempt in range(1, self._max_retries + 2):
             try:
                 # Send command
@@ -208,7 +205,7 @@ class SocketTransport:
                     logger.warning(f"Empty response to query: {command}")
                     raise ValueError(f"Empty response to query '{command}'")
                 
-                logger.debug(f"SCPI response: {response}")
+                logger.debug("SCPI query succeeded: %s -> %s", command, response)
                 return response
                 
             except socket.timeout as e:
@@ -234,9 +231,11 @@ class SocketTransport:
 
     def close(self) -> None:
         """Close socket and cleanup."""
-        if self._socket:
+        sock = self._socket
+        self._socket = None
+        if sock is not None:
             try:
-                self._socket.close()
+                sock.close()
                 logger.debug("Socket closed")
             except Exception as e:
                 logger.warning(f"Error closing socket: {e}")

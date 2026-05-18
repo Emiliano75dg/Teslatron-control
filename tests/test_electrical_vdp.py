@@ -8,6 +8,7 @@ import yaml
 from teslatron_services.electrical.config import (
     CryostatEndpointConfig,
     ElectricalServiceConfig,
+    InstrumentConfig,
     MeasurementPlanConfig,
     MeasurementSessionConfig,
     MeasurementStepConfig,
@@ -18,6 +19,7 @@ from teslatron_services.electrical.config import (
 )
 from teslatron_services.electrical.orchestrator import ElectricalMeasurementService
 from teslatron_services.electrical.vdp import run_vdp_characterization_for_teslatron
+from teslatron_services.electrical.vdp.scpi import SocketTransport
 
 
 class ElectricalVdpConfigTests(unittest.TestCase):
@@ -25,6 +27,7 @@ class ElectricalVdpConfigTests(unittest.TestCase):
         config = config_from_mapping(
             {
                 "electrical": {
+                    "instruments": {"vdp": {}},
                     "plans": [
                         {
                             "id": "vdp",
@@ -42,6 +45,7 @@ class ElectricalVdpConfigTests(unittest.TestCase):
             config_from_mapping(
                 {
                     "electrical": {
+                        "instruments": {"x": {}},
                         "plans": [
                             {
                                 "id": "bad",
@@ -116,6 +120,7 @@ class ElectricalVdpIntegrationTests(unittest.IsolatedAsyncioTestCase):
         config = ElectricalServiceConfig(
             cryostat=CryostatEndpointConfig(),
             measurement_session=MeasurementSessionConfig(save_dir=save_dir),
+            instruments={"vdp": InstrumentConfig()},
             vdp=vdp_config,
             plans={plan.id: plan},
         )
@@ -244,3 +249,22 @@ class ElectricalVdpIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(status["status"], {"aborted", "stopped"})
             self.assertEqual(notifications[-1]["signal"], "measure_vdp.failed")
 
+
+class SocketTransportTests(unittest.TestCase):
+    def test_close_is_idempotent(self) -> None:
+        class FakeSocket:
+            def __init__(self) -> None:
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+
+        fake_socket = FakeSocket()
+        transport = SocketTransport.__new__(SocketTransport)
+        transport._socket = fake_socket
+
+        transport.close()
+        transport.close()
+
+        self.assertIsNone(transport._socket)
+        self.assertEqual(fake_socket.close_calls, 1)

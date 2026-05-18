@@ -5,6 +5,7 @@ import csv
 import contextlib
 import copy
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +16,8 @@ from typing import Any, Callable
 from .backends import CryostatBackend, create_backend, list_visa_resources
 from .config import CryostatServiceConfig, InsertCapabilitiesConfig
 from .state import CryostatMode, CryostatState, SafetyState
+
+logger = logging.getLogger(__name__)
 
 
 class CryostatService:
@@ -204,9 +207,11 @@ class CryostatService:
     def list_saved_recipes(self) -> list[dict[str, Any]]:
         recipes = []
         for path in sorted(self._recipe_dir().glob("*.json")):
-            with contextlib.suppress(ValueError, json.JSONDecodeError, OSError):
+            try:
                 recipe = self._load_saved_recipe_file(path)
                 recipes.append(self._saved_recipe_summary(path, recipe))
+            except (ValueError, json.JSONDecodeError, OSError) as exc:
+                logger.warning("Skipping unreadable saved recipe at %s: %s", path, exc)
         recipes.sort(key=lambda item: item["name"].lower())
         return recipes
 
@@ -219,10 +224,17 @@ class CryostatService:
             "steps": recipe["steps"],
         }
 
-    async def save_recipe(self, recipe: dict[str, Any]) -> dict[str, Any]:
+    async def save_recipe(
+        self,
+        recipe: dict[str, Any],
+        *,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
         self._ensure_writable()
         normalized = self._normalized_recipe_definition(recipe)
         path = self._recipe_output_path(normalized["name"])
+        if path.exists() and not overwrite:
+            raise ValueError(f"A saved recipe named {normalized['name']!r} already exists")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(normalized, indent=2) + "\n")
         return self._saved_recipe_summary(path, normalized)
@@ -373,6 +385,7 @@ class CryostatService:
             )
             raise
         except Exception as exc:
+            logger.exception("Recipe execution failed")
             self._recipe_status.update(
                 {
                     "status": "error",
@@ -613,13 +626,20 @@ class CryostatService:
 
     def _recipe_file_path(self, recipe_id: str) -> Path:
         normalized_id = _recipe_slug(recipe_id)
-        path = self._recipe_dir() / f"{normalized_id}.json"
+        path = self._safe_recipe_path(f"{normalized_id}.json")
         if not path.exists():
             raise ValueError(f"Unknown saved recipe: {recipe_id}")
         return path
 
     def _recipe_output_path(self, recipe_name: str) -> Path:
-        return self._recipe_dir() / f"{_recipe_slug(recipe_name)}.json"
+        return self._safe_recipe_path(f"{_recipe_slug(recipe_name)}.json")
+
+    def _safe_recipe_path(self, filename: str) -> Path:
+        recipe_dir = self._recipe_dir().resolve()
+        path = (recipe_dir / filename).resolve()
+        if path.parent != recipe_dir:
+            raise ValueError(f"Recipe path escapes recipe_dir: {filename!r}")
+        return path
 
     def _load_saved_recipe_file(self, path: Path) -> dict[str, Any]:
         try:
@@ -651,13 +671,18 @@ class CryostatService:
         await self._publish(data)
         now = monotonic()
         if now - self._last_log >= self.config.log_interval_s:
-            await self._run_blocking(lambda: self._append_log(data))
-            self._last_log = now
+            try:
+                await self._run_blocking(lambda: self._append_log(data))
+            except OSError as exc:
+                logger.warning("Failed to append cryostat environment log: %s", exc)
+            else:
+                self._last_log = now
 
     def _read_state_safely(self) -> CryostatState:
         try:
             return self.backend.read_state()
         except Exception as exc:
+            logger.exception("Failed to read cryostat state from backend")
             return CryostatState(
                 mode=CryostatMode.ERROR,
                 safety=SafetyState(
@@ -673,7 +698,10 @@ class CryostatService:
 
     async def _run(self) -> None:
         while not self._stop_event.is_set():
-            await self.poll_once()
+            try:
+                await self.poll_once()
+            except Exception:
+                logger.exception("Unexpected error in cryostat polling loop")
             try:
                 await asyncio.wait_for(
                     self._stop_event.wait(),

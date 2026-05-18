@@ -23,6 +23,10 @@ class MercuryITCConfig:
     vti_loop: str = "MB1.T1"
     pressure: str = "DB5.P1"
 
+    def __post_init__(self) -> None:
+        if self.timeout_ms <= 0:
+            raise ValueError("Cryostat ITC timeout_ms must be > 0")
+
 
 @dataclass(slots=True)
 class MercuryIPSConfig:
@@ -38,6 +42,16 @@ class MercuryIPSConfig:
     switch_off_delay_s: float = 300.0
     command_delay_s: float = 0.1
 
+    def __post_init__(self) -> None:
+        if self.timeout_ms <= 0:
+            raise ValueError("Cryostat IPS timeout_ms must be > 0")
+        if self.switch_on_delay_s < 0:
+            raise ValueError("Cryostat IPS switch_on_delay_s must be >= 0")
+        if self.switch_off_delay_s < 0:
+            raise ValueError("Cryostat IPS switch_off_delay_s must be >= 0")
+        if self.command_delay_s < 0:
+            raise ValueError("Cryostat IPS command_delay_s must be >= 0")
+
 
 @dataclass(slots=True)
 class SafetyConfig:
@@ -46,6 +60,18 @@ class SafetyConfig:
     max_temperature_rate_K_per_min: float = 5.0
     max_field_T: float = 12.0
     max_field_rate_T_per_min: float = 0.5
+
+    def __post_init__(self) -> None:
+        if self.min_temperature_K > self.max_temperature_K:
+            raise ValueError(
+                "Cryostat safety min_temperature_K cannot exceed max_temperature_K"
+            )
+        if self.max_temperature_rate_K_per_min <= 0:
+            raise ValueError("Cryostat safety max_temperature_rate_K_per_min must be > 0")
+        if self.max_field_T < 0:
+            raise ValueError("Cryostat safety max_field_T must be >= 0")
+        if self.max_field_rate_T_per_min <= 0:
+            raise ValueError("Cryostat safety max_field_rate_T_per_min must be > 0")
 
 
 @dataclass(slots=True)
@@ -85,6 +111,7 @@ class CryostatServiceConfig:
     read_only: bool = False
     poll_interval_s: float = 1.0
     log_interval_s: float = 20.0
+    enable_shutdown: bool = False
     log_dir: str = "data"
     recipe_dir: str = "data/recipes"
     sample_thermometer: str = ""
@@ -96,6 +123,9 @@ class CryostatServiceConfig:
     ips: MercuryIPSConfig = field(default_factory=MercuryIPSConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
 
+    def __post_init__(self) -> None:
+        self.validate()
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -103,7 +133,7 @@ class CryostatServiceConfig:
         try:
             profile = self.insert_profiles[profile_id]
         except KeyError as exc:
-            raise KeyError(f"Unknown insert profile: {profile_id}") from exc
+            raise ValueError(f"Unknown active_insert {profile_id!r}") from exc
         self.active_insert = profile_id
         self.sample_thermometer = profile.sample_thermometer
         self.itc = replace(profile.itc)
@@ -112,6 +142,7 @@ class CryostatServiceConfig:
             self.sample_sensor_presets,
             self.active_sample_sensor,
         )
+        self.validate()
 
     def active_insert_profile(self) -> InsertProfileConfig | None:
         if self.active_insert is None:
@@ -138,6 +169,36 @@ class CryostatServiceConfig:
         if self.active_sample_sensor is None:
             return None
         return self.sample_sensor_presets.get(self.active_sample_sensor)
+
+    def validate(self) -> None:
+        if self.poll_interval_s <= 0:
+            raise ValueError("Cryostat poll_interval_s must be > 0")
+        if self.log_interval_s < 0:
+            raise ValueError("Cryostat log_interval_s must be >= 0")
+        if self.active_insert is not None and self.active_insert not in self.insert_profiles:
+            raise ValueError(f"Unknown active_insert {self.active_insert!r}")
+        for profile_id, profile in self.insert_profiles.items():
+            _validate_sensor_options(
+                profile_id,
+                profile.sample_sensor_options,
+                profile.default_sample_sensor,
+                self.sample_sensor_presets,
+            )
+        if self.active_sample_sensor is not None:
+            if self.active_sample_sensor not in self.sample_sensor_presets:
+                raise ValueError(
+                    f"Unknown active_sample_sensor {self.active_sample_sensor!r}"
+                )
+            profile = self.active_insert_profile()
+            if (
+                profile is not None
+                and profile.sample_sensor_options
+                and self.active_sample_sensor not in profile.sample_sensor_options
+            ):
+                raise ValueError(
+                    f"Active sample sensor {self.active_sample_sensor!r} is not allowed "
+                    f"for insert profile {self.active_insert!r}"
+                )
 
 
 def load_config(path: str | Path | None = None) -> CryostatServiceConfig:
@@ -205,6 +266,7 @@ def config_from_mapping(data: dict[str, Any]) -> CryostatServiceConfig:
         read_only=bool(cryostat.get("read_only", False)),
         poll_interval_s=float(cryostat.get("poll_interval_s", 1.0)),
         log_interval_s=float(cryostat.get("log_interval_s", 20.0)),
+        enable_shutdown=bool(cryostat.get("enable_shutdown", False)),
         log_dir=cryostat.get("log_dir", "data"),
         recipe_dir=cryostat.get(
             "recipe_dir",
@@ -222,6 +284,7 @@ def config_from_mapping(data: dict[str, Any]) -> CryostatServiceConfig:
     if config.insert_profiles:
         selected_insert = config.active_insert or next(iter(config.insert_profiles))
         config.apply_insert_profile(selected_insert)
+    config.validate()
     return config
 
 

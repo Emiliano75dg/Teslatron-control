@@ -73,6 +73,7 @@ class ApplySampleSensorRequest(BaseModel):
 class RecipeRequest(BaseModel):
     name: str = "Recipe"
     steps: list[dict]
+    overwrite: bool = False
 
 
 class RecipeSignalRequest(BaseModel):
@@ -92,6 +93,12 @@ async def permission_error_handler(
     request: Request, exc: PermissionError
 ) -> JSONResponse:
     return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
+def _model_payload(model: BaseModel) -> dict:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    return model.dict()
 
 
 def _schedule_process_shutdown(delay_s: float = 0.2) -> None:
@@ -136,13 +143,14 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.post("/shutdown")
-    async def shutdown() -> dict[str, str]:
-        if shutdown_callback is not None:
-            shutdown_callback()
-        else:
-            _schedule_process_shutdown()
-        return {"status": "shutting_down"}
+    if service_config.enable_shutdown:
+        @app.post("/shutdown")
+        async def shutdown() -> dict[str, str]:
+            if shutdown_callback is not None:
+                shutdown_callback()
+            else:
+                _schedule_process_shutdown()
+            return {"status": "shutting_down"}
 
     @app.get("/config")
     async def get_config() -> dict:
@@ -190,11 +198,13 @@ def create_app(
 
     @app.post("/recipes/start")
     async def start_recipe(request: RecipeRequest) -> dict:
-        return await service().start_recipe(request.dict())
+        return await service().start_recipe(_model_payload(request))
 
     @app.post("/recipes/save")
     async def save_recipe(request: RecipeRequest) -> dict:
-        return await service().save_recipe(request.dict())
+        payload = _model_payload(request)
+        overwrite = bool(payload.pop("overwrite", False))
+        return await service().save_recipe(payload, overwrite=overwrite)
 
     @app.post("/recipes/acknowledge")
     async def acknowledge_recipe() -> dict:

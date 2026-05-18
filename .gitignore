@@ -1,9 +1,15 @@
-__pycache__
+__pycache__/
 test*
 !tests/
 !tests/*.py
+*.pyc
 *.log
 *.ipynb
 !example_measurement_script.ipynb
 .codex
+.env
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
 data/*.csv
+data/**/*.jsonl
