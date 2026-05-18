@@ -111,6 +111,41 @@ class ElectricalServiceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(rows[0]["value"], "1.0")
                 self.assertEqual(snapshot["run"]["output_paths"]["jsonl"], str(path))
                 self.assertEqual(snapshot["run"]["output_paths"]["electrical_csv"], str(csv_path))
+                metadata_path = Path(snapshot["run"]["metadata_path"])
+                self.assertTrue(metadata_path.exists())
+                self.assertEqual(snapshot["run"]["output_paths"]["metadata"], str(metadata_path))
+                self.assertEqual(path.parent, csv_path.parent)
+                self.assertEqual(path.parent, metadata_path.parent)
+                self.assertTrue(Path(snapshot["run"]["output_paths"]["config_snapshot"]).exists())
+                self.assertTrue(Path(snapshot["run"]["output_paths"]["cryostat_snapshot_start"]).exists())
+                self.assertTrue(Path(snapshot["run"]["output_paths"]["cryostat_snapshot_end"]).exists())
+            finally:
+                await asyncio.wait_for(service.stop(), timeout=5)
+
+    async def test_run_start_creates_metadata_and_initial_snapshots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = self.make_service(save_dir=tmpdir, safe_to_measure=False)
+            await service.start()
+            try:
+                status = await service.start_periodic_run(
+                    run_id="metadata_run",
+                    instrument="mock_meter",
+                    interval_s=0.5,
+                    max_points=1,
+                )
+                metadata_path = Path(status["metadata_path"])
+                start_snapshot_path = Path(status["output_paths"]["cryostat_snapshot_start"])
+                config_snapshot_path = Path(status["output_paths"]["config_snapshot"])
+
+                self.assertTrue(metadata_path.exists())
+                self.assertTrue(start_snapshot_path.exists())
+                self.assertTrue(config_snapshot_path.exists())
+
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                self.assertEqual(metadata["run_id"], "metadata_run")
+                self.assertEqual(metadata["status"], "running")
+                self.assertEqual(metadata["points_acquired"], 0)
+                self.assertEqual(metadata["initial_cryostat_snapshot"]["field"]["B_T"], 1.5)
             finally:
                 await asyncio.wait_for(service.stop(), timeout=5)
 
@@ -232,6 +267,29 @@ class ElectricalServiceTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await asyncio.wait_for(service.stop(), timeout=5)
 
+    async def test_stop_run_writes_final_cryostat_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            service = self.make_service(save_dir=tmpdir, safe_to_measure=False)
+            await service.start()
+            try:
+                await service.start_periodic_run(
+                    run_id="stop_run",
+                    instrument="mock_meter",
+                    interval_s=1.0,
+                    max_points=5,
+                )
+                status = await service.stop_run()
+
+                self.assertEqual(status["status"], "stopped")
+                end_snapshot_path = Path(status["output_paths"]["cryostat_snapshot_end"])
+                self.assertTrue(end_snapshot_path.exists())
+
+                metadata = json.loads(Path(status["metadata_path"]).read_text(encoding="utf-8"))
+                self.assertEqual(metadata["status"], "stopped")
+                self.assertIsNotNone(metadata["final_cryostat_snapshot"])
+            finally:
+                await asyncio.wait_for(service.stop(), timeout=5)
+
 
 class ElectricalApiTests(unittest.IsolatedAsyncioTestCase):
     def _app_for_service(self, service):
@@ -254,7 +312,11 @@ class ElectricalApiTests(unittest.IsolatedAsyncioTestCase):
                 return {"status": "ok"}
 
             def run_status(self) -> dict:
-                return {"status": "idle"}
+                return {
+                    "status": "idle",
+                    "metadata_path": "/tmp/metadata.json",
+                    "output_paths": {"jsonl": "/tmp/run.jsonl"},
+                }
 
         app = self._app_for_service(FakeElectricalApiService())
         transport = httpx.ASGITransport(app=app)
@@ -262,12 +324,17 @@ class ElectricalApiTests(unittest.IsolatedAsyncioTestCase):
             health = await client.get("/health")
             state = await client.get("/state")
             runs = await client.get("/runs")
+            current_run = await client.get("/runs/current")
 
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json(), {"status": "ok"})
         self.assertEqual(state.status_code, 200)
         self.assertEqual(runs.status_code, 200)
+        self.assertEqual(current_run.status_code, 200)
         self.assertIn("run", runs.json())
+        self.assertEqual(current_run.json()["run"]["metadata_path"], "/tmp/metadata.json")
+        self.assertEqual(current_run.json()["metadata_path"], "/tmp/metadata.json")
+        self.assertEqual(current_run.json()["output_paths"]["jsonl"], "/tmp/run.jsonl")
 
     async def test_recipe_signal_returns_400_for_unknown_plan(self) -> None:
         class FakeElectricalApiService:
@@ -454,3 +521,11 @@ class ElectricalCsvMeasurementWriterTests(unittest.TestCase):
             self.assertTrue(path.resolve().is_relative_to(Path(tmpdir).resolve()))
             self.assertNotIn("..", path.parts)
             self.assertEqual(path.parent.name, "evil")
+
+    def test_csv_path_is_created_inside_per_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            writer = ElectricalCsvMeasurementWriter(tmpdir)
+            path = writer.begin_run("shared-dir")
+
+            self.assertEqual(path.parent.name, "shared-dir")
+            self.assertEqual(path.name, "shared-dir_electrical.csv")
