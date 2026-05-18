@@ -1,0 +1,24 @@
+version: 1
+transport:
+  default_timeout_s: 5.0
+  command_termination: "\n"
+  read_buffer_bytes: 65536
+instruments:
+  b2902b:
+    model: Keysight_B2902B
+    ip_address: 172.31.109.123
+    port: 5025
+    visa_resource: TCPIP0::172.31.109.123::5025::SOCKET
+    channel: 1
+    line_frequency_Hz: 50
+    nplc: 5.0
+    compliance_V: 10.0
+  daq6510:
+    model: Keithley_DAQ6510
+    ip_address: 172.31.109.65
+    port: 5025
+    visa_resource: TCPIP0::172.31.109.65::5025::SOCKET
+    command_set: SCPI
+    switching_module:
+      model: Keithley_7709
+      slot: 1

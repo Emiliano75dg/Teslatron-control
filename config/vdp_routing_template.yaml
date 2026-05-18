@@ -1,0 +1,125 @@
+version: 1
+description: Logical 7709 routing template using one pole of the 2-pole matrix as a single-ended 6 x 8
+  matrix.
+matrix:
+  model: Keithley_7709
+  daq_slot: 1
+  rows: 6
+  columns: 8
+  crosspoint_channel_formula: (row - 1) * 8 + column
+  daq_channel_formula: daq_slot * 100 + crosspoint_channel
+  used_pole: HI
+  unused_pole: LO_must_remain_unconnected_or_intentionally_guarded
+sample_columns:
+  A: 1
+  B: 2
+  C: 3
+  D: 4
+single_channel_kelvin_rows:
+  smu_channel: 1
+  force_hi: 1
+  force_lo: 2
+  sense_hi: 3
+  sense_lo: 4
+dual_channel_rows_optional:
+  current_smu_channel: 1
+  voltage_smu_channel: 2
+  ch1_force_hi: 1
+  ch1_force_lo: 2
+  ch1_sense_hi: 3
+  ch1_sense_lo: 4
+  ch2_hi: 5
+  ch2_lo: 6
+routing_rules:
+  kelvin_local_single_channel:
+    description: Force and sense are connected to the same two sample contacts.
+    closures:
+    - row: force_hi
+      column: force_pair[0]
+    - row: force_lo
+      column: force_pair[1]
+    - row: sense_hi
+      column: sense_pair[0]
+    - row: sense_lo
+      column: sense_pair[1]
+  nonlocal_single_channel:
+    description: Force pair carries current; sense pair reads a different voltage pair.
+    closures:
+    - row: force_hi
+      column: current_pair[0]
+    - row: force_lo
+      column: current_pair[1]
+    - row: sense_hi
+      column: voltage_pair[0]
+    - row: sense_lo
+      column: voltage_pair[1]
+  nonlocal_dual_channel_optional:
+    description: CH1 carries current; CH2 is used as high-impedance voltmeter.
+    closures:
+    - row: ch1_force_hi
+      column: current_pair[0]
+    - row: ch1_force_lo
+      column: current_pair[1]
+    - row: ch1_sense_hi
+      column: current_pair[0]
+    - row: ch1_sense_lo
+      column: current_pair[1]
+    - row: ch2_hi
+      column: voltage_pair[0]
+    - row: ch2_lo
+      column: voltage_pair[1]
+examples:
+  R_AB_kelvin:
+    mode: kelvin_local_single_channel
+    force_pair:
+    - A
+    - B
+    sense_pair:
+    - A
+    - B
+    logical_closures:
+    - - force_hi
+      - A
+    - - force_lo
+      - B
+    - - sense_hi
+      - A
+    - - sense_lo
+      - B
+    crosspoint_closures_with_default_map:
+    - 1
+    - 10
+    - 17
+    - 26
+    daq_channel_closures_with_default_map:
+    - 101
+    - 110
+    - 117
+    - 126
+  R_AB_CD_van_der_pauw_single_channel:
+    mode: nonlocal_single_channel
+    current_pair:
+    - A
+    - B
+    voltage_pair:
+    - C
+    - D
+    logical_closures:
+    - - force_hi
+      - A
+    - - force_lo
+      - B
+    - - sense_hi
+      - C
+    - - sense_lo
+      - D
+    crosspoint_closures_with_default_map:
+    - 1
+    - 10
+    - 19
+    - 28
+    daq_channel_closures_with_default_map:
+    - 101
+    - 110
+    - 119
+    - 128

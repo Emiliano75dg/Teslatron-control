@@ -1,0 +1,51 @@
+{
+  "electrical": {
+    "read_only": false,
+    "cryostat": {
+      "state_url": "http://127.0.0.1:8765/state",
+      "timeout_s": 2.0,
+      "poll_interval_s": 1.0,
+      "stale_after_s": 5.0
+    },
+    "measurement_session": {
+      "save_dir": "data/electrical"
+    },
+    "vdp": {
+      "instruments_config": "config/vdp_instruments.example.yaml",
+      "measurement_sequences_config": "config/vdp_measurement_sequences.yaml",
+      "routing_config": "config/vdp_routing_template.yaml",
+      "wiring_config": "config/vdp_wiring.example.yaml",
+      "execute": false,
+      "include_contact_check": false,
+      "include_hall": false
+    },
+    "instruments": {
+      "mock_meter": {
+        "driver": "mock",
+        "address": "MOCK::INSTR"
+      }
+    },
+    "plans": [
+      {
+        "id": "vdp_characterization",
+        "mode": "command-driven",
+        "trigger": {
+          "type": "recipe_signal",
+          "signal": "measure_vdp"
+        },
+        "steps": [
+          {
+            "instrument": "vdp",
+            "action": "vdp_characterization"
+          }
+        ],
+        "require_safe_to_measure": true,
+        "completion": {
+          "notify_recipe": true,
+          "success_signal": "measure_vdp.completed",
+          "failure_signal": "measure_vdp.failed"
+        }
+      }
+    ]
+  }
+}
