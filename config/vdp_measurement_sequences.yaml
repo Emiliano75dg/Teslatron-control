@@ -1,4 +1,56 @@
 version: 1
+# LabVIEW / external-measurement recipe examples for the cryostat service:
+#
+# Stable-point measurement:
+# {
+#   "name": "IV_at_stable_point",
+#   "steps": [
+#     {
+#       "type": "external_measurement",
+#       "mode": "point",
+#       "request_signal": "measure_iv",
+#       "completion_signal": "measure_iv.completed",
+#       "failure_signal": "measure_iv.failed",
+#       "timeout_s": 600,
+#       "message": "Run IV measurement in LabVIEW"
+#     }
+#   ]
+# }
+#
+# Continuous acquisition during a ramp:
+# {
+#   "name": "R_vs_T_continuous",
+#   "steps": [
+#     {
+#       "type": "external_measurement",
+#       "mode": "start",
+#       "request_signal": "R_vs_T.start",
+#       "completion_signal": "R_vs_T.started",
+#       "failure_signal": "R_vs_T.failed",
+#       "timeout_s": 30,
+#       "message": "Start LabVIEW continuous acquisition"
+#     },
+#     {
+#       "type": "ramp_temperature",
+#       "loop": "sample",
+#       "target_K": 300,
+#       "rate_K_per_min": 1.0,
+#       "tolerance_K": 0.2,
+#       "stable_s": 0
+#     },
+#     {
+#       "type": "external_measurement",
+#       "mode": "stop",
+#       "request_signal": "R_vs_T.stop",
+#       "completion_signal": "R_vs_T.stopped",
+#       "failure_signal": "R_vs_T.failed",
+#       "timeout_s": 30,
+#       "message": "Stop LabVIEW continuous acquisition"
+#     }
+#   ]
+# }
+#
+# LabVIEW can poll GET /measurement-context at about 1-5 Hz during the ramp.
 assumptions:
   sample_contacts:
   - A

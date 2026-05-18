@@ -1,6 +1,13 @@
 version: 1
 description: Logical 7709 routing template using one pole of the 2-pole matrix as a single-ended 6 x 8
   matrix.
+
+# Recipe integration note:
+# This routing template is independent from the cryostat recipe handshake, but
+# typical LabVIEW-driven flows are:
+# 1. external_measurement mode=point for measurements at stable T/B
+# 2. external_measurement mode=start before ramp_temperature or ramp_field
+# 3. external_measurement mode=stop after the ramp step
 matrix:
   model: Keithley_7709
   daq_slot: 1

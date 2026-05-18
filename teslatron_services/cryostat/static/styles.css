@@ -158,6 +158,7 @@ h3 {
 .plot-panel,
 .command-panel,
 .recipe-panel,
+.external-panel,
 .config-panel,
 .event-panel {
   grid-column: span 12;
@@ -631,6 +632,32 @@ button.ghost {
   gap: 12px;
 }
 
+.external-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.external-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.external-card.wide {
+  grid-column: span 2;
+}
+
+.external-payload-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .recipe-builder,
 .recipe-status-card {
   display: grid;
@@ -640,6 +667,26 @@ button.ghost {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel-strong);
+}
+
+.recipe-help-banner {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #c7d6e2;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #f5fbff, #eef6fb);
+  color: #274255;
+}
+
+.recipe-help-banner strong {
+  font-size: 13px;
+}
+
+.recipe-template-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .recipe-add-row {
@@ -671,6 +718,41 @@ button.ghost {
 .recipe-steps li:not(.muted) {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.external-guide-card {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+}
+
+.guide-list,
+.endpoint-list {
+  margin: 0;
+  padding-left: 18px;
+  color: #344452;
+}
+
+.guide-list li,
+.endpoint-list li {
+  margin-bottom: 6px;
+}
+
+.external-guide-list dd {
+  text-align: left;
+  font-family: inherit;
+}
+
+code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #eef3f7;
+  color: #17303f;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
 }
 
 .events {
@@ -796,6 +878,8 @@ button.ghost {
   .loop-grid,
   .field-grid,
   .recipe-grid,
+  .external-grid,
+  .external-payload-grid,
   .recipe-add-row,
   .plot-grid,
   .config-grid,

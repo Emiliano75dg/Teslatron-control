@@ -113,6 +113,9 @@ Recommended endpoints:
 Recommended polling rate for LabVIEW is about 1-5 Hz for slow acquisitions.
 The payload uses explicit field names such as `sample_temperature_K` and
 `field_T`; do not depend on anonymous array ordering such as `[T, B]`.
+LabVIEW can poll these endpoints continuously: when no external measurement is
+active, `GET /external-measurements/pending` returns `{"pending": false}`,
+while `GET /measurement-context` still returns the latest available context.
 
 ## 10. Heliox notes
 

@@ -92,6 +92,11 @@ recipes can use `mode: "start"` before a ramp and `mode: "stop"` after the ramp.
 LabVIEW starts acquisition, the cryostat continues the ramp, and LabVIEW correlates the acquired
 data with `timestamp_unix_s` or `timestamp_iso`.
 
+LabVIEW may poll these endpoints continuously. When there is no active external
+measurement request, `GET /external-measurements/pending` returns
+`{"pending": false}` while `GET /measurement-context` still returns the latest
+available context.
+
 HTTP polling is adequate for slower acquisitions around 1-5 Hz. For faster acquisitions, the
 recommended approach is to record timestamps on both sides and merge data offline. If tighter live
 coupling becomes necessary later, a streaming interface such as WebSocket or Server-Sent Events can
