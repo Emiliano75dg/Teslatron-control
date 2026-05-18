@@ -1,6 +1,6 @@
 {
   "cryostat": {
-    "backend": "mercury",
+    "backend": "standard",
     "read_only": false,
     "active_insert": "fisher_probe",
     "active_sample_sensor": "fisher_cernox",
@@ -28,21 +28,6 @@
         "description": "Default cryostat configuration for the Fisher probe insert.",
         "sample_thermometer": "",
         "sample_sensor_options": ["fisher_cernox"],
-        "default_sample_sensor": "fisher_cernox",
-        "capabilities": {
-          "temperature_control": true,
-          "sample_loop": true,
-          "vti_loop": true,
-          "gas_control": true,
-          "pid_control": true,
-          "fixed_heater": true
-        }
-      },
-      "heliox_probe": {
-        "name": "Heliox probe",
-        "description": "Cryostat configuration for the Heliox probe insert.",
-        "sample_thermometer": "",
-        "sample_sensor_options": ["fisher_cernox", "basic_cernox"],
         "default_sample_sensor": "fisher_cernox",
         "capabilities": {
           "temperature_control": true,

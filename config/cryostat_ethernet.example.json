@@ -1,6 +1,6 @@
 {
   "cryostat": {
-    "backend": "mercury",
+    "backend": "standard",
     "read_only": true,
     "active_insert": "fisher_probe",
     "active_sample_sensor": "fisher_cernox",

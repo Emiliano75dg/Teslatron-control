@@ -10,6 +10,46 @@ with:
 - controlled temperature, field, and gas commands
 - diagnostics, GUI, and recipe support
 
+## Documentation map
+
+If you are new to the repository, start here:
+
+- `docs/user_guide.md`: guided overview of the project, startup flows, configs,
+  endpoints, output files, and common workflows
+- `LAB_RUNBOOK.md`: shortest safe procedure for live lab usage
+- `SERVICE_ARCHITECTURE.md`: backend and API architecture for the cryostat service
+- `ELECTRICAL_MEASUREMENT_ARCHITECTURE.md`: design notes for the electrical service
+- `docs/electrical_measurements.md`: electrical output formats and LabVIEW integration details
+
+Recommended reading order:
+
+1. `README.md`
+2. `docs/user_guide.md`
+3. `LAB_RUNBOOK.md` for real hardware sessions
+4. `SERVICE_ARCHITECTURE.md` only when you need implementation-level detail
+
+## What is in this repository
+
+The codebase currently contains two closely related service layers:
+
+- `teslatron_services/cryostat`: FastAPI service for cryostat control, state polling,
+  diagnostics, GUI, recipes, and LabVIEW-facing measurement context
+- `teslatron_services/electrical`: companion service for electrical measurements
+  that consumes cryostat state instead of opening Mercury controllers directly
+
+The cryostat service supports three backends:
+
+- `mock`: offline development without hardware
+- `standard`: the standard cryostat configuration, with direct Mercury iTC/iPS control through VISA
+- `heliox`: Heliox-specific configuration, with abstract sample control plus Mercury-based VTI/gas and iPS field control
+
+Typical repository areas:
+
+- `config/`: ready-to-run examples and lab configs
+- `docs/`: operator notes, architecture, measurement docs, and manuals
+- `tools/`: small standalone utilities
+- `tests/`: regression tests for service behavior
+
 ## How to use
 
 Install the service dependencies:
@@ -34,10 +74,34 @@ python3 tools/inspect_environment_log.py data/cryostat_environment_YYYY-MM-DD.cs
 
 For PyVisa to work, you will need to install the [National Instruments VISA library](https://pyvisa.readthedocs.io/en/latest/faq/getting_nivisa.html#faq-getting-nivisa).
 
+## Quick start
+
+### Offline development with the mock backend
+
+Use the mock config when you want to inspect the API or GUI without any hardware:
+
+```bash
+python3 -m teslatron_services --config config/cryostat_mock.json --port 8765
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8765/
+```
+
+Useful first checks:
+
+```bash
+curl http://127.0.0.1:8765/health
+curl http://127.0.0.1:8765/state
+curl http://127.0.0.1:8765/config
+```
+
 ## Lab cryostat service
 
 For first live checks on the Teslatron in the Q-MAT lab, use the dedicated
-read-only Mercury config:
+read-only standard config:
 
 ```text
 config/cryostat_lab_readonly.json
@@ -122,9 +186,15 @@ For the recommended lab workflow, command order, and safety notes, see:
 LAB_RUNBOOK.md
 ```
 
+For a broader explanation of the available configs, endpoints, and workflows, see:
+
+```text
+docs/user_guide.md
+```
+
 ## Heliox backend
 
-A dedicated Heliox backend is also available for Mercury controllers that expose the
+A dedicated Heliox configuration is also available for Mercury controllers that expose the
 abstract `HelioxX:HEL` interface described in the Heliox manual.
 
 Use the read-only example config for first checks:
@@ -165,6 +235,11 @@ Current Heliox model:
 - VTI loop and gas control remain available through the underlying Mercury iTC channels
 - field control remains available through the system-global Mercury iPS
 - direct sample PID/fixed-heater tuning is intentionally not exposed
+
+Conceptually, the user-facing alternatives are:
+
+- `standard`: Fisher probe or Basic probe
+- `heliox`: Heliox probe only
 
 The backend is implemented and locally tested; full end-to-end validation through the GUI
 should still be done on the instrument in the lab before relying on it operationally.

@@ -1030,7 +1030,7 @@ class _HelioxSampleControlStrategy:
 
 
 class MercuryCryostatBackend(CryostatBackend):
-    BACKEND_NAME = "mercury"
+    BACKEND_NAME = "standard"
 
     def __init__(self, config: CryostatServiceConfig):
         self.config = config
@@ -1236,7 +1236,7 @@ class MercuryCryostatBackend(CryostatBackend):
 
     def diagnostics(self) -> dict:
         return {
-            "backend": "mercury",
+            "backend": self.BACKEND_NAME,
             "itc_address": self.config.itc.address,
             "ips_address": self.config.ips.address,
             "itc_visa": {
@@ -1887,7 +1887,7 @@ def _temperature_heater_mode(
 def create_backend(config: CryostatServiceConfig) -> CryostatBackend:
     if config.backend == "mock":
         return MockCryostatBackend(config)
-    if config.backend == "mercury":
+    if config.backend == "standard":
         return MercuryCryostatBackend(config)
     if config.backend == "heliox":
         return HelioxCryostatBackend(config)

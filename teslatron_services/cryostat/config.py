@@ -8,6 +8,9 @@ from typing import Any
 DEFAULT_INSERT_PROFILE_ID = "fisher_probe"
 DEFAULT_INSERT_PROFILE_NAME = "Fisher probe"
 DEFAULT_INSERT_PROFILE_DESCRIPTION = "Default cryostat configuration for the Fisher probe insert."
+LEGACY_BACKEND_ALIASES = {
+    "mercury": "standard",
+}
 
 
 @dataclass(slots=True)
@@ -121,6 +124,7 @@ class CryostatServiceConfig:
     safety: SafetyConfig = field(default_factory=SafetyConfig)
 
     def __post_init__(self) -> None:
+        self.backend = _normalize_backend_name(self.backend)
         self.validate()
 
     def to_dict(self) -> dict[str, Any]:
@@ -168,6 +172,11 @@ class CryostatServiceConfig:
         return self.sample_sensor_presets.get(self.active_sample_sensor)
 
     def validate(self) -> None:
+        if self.backend not in {"mock", "standard", "heliox"}:
+            raise ValueError(
+                f"Unsupported cryostat backend: {self.backend}. "
+                "Expected one of: mock, standard, heliox"
+            )
         if self.poll_interval_s <= 0:
             raise ValueError("Cryostat poll_interval_s must be > 0")
         if self.log_interval_s < 0:
@@ -279,6 +288,11 @@ def config_from_mapping(data: dict[str, Any]) -> CryostatServiceConfig:
         config.apply_insert_profile(selected_insert)
     config.validate()
     return config
+
+
+def _normalize_backend_name(value: str) -> str:
+    normalized = str(value).strip().lower()
+    return LEGACY_BACKEND_ALIASES.get(normalized, normalized)
 
 
 def _insert_profile_from_mapping(
