@@ -1,6 +1,17 @@
 version: 1
 description: Example wiring overlay. Copy this file and edit it with the real lab cabling.
 
+# LabVIEW note:
+# During continuous measurements driven by the cryostat recipe engine, prefer
+# polling GET /measurement-context and correlating timestamps with the VDP data.
+# Recommended payload fields are:
+# - timestamp_unix_s
+# - timestamp_iso
+# - sample_temperature_K
+# - field_T
+# - safe_to_measure
+# Do not depend on anonymous arrays such as [T, B].
+
 # The application starts from config/routing_template.yaml and applies these overrides.
 routing_overrides:
   matrix:

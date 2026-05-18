@@ -13,6 +13,10 @@ const state = {
   plotSeriesEnabled: {},
   recipeSteps: [],
   savedRecipes: [],
+  externalMeasurementPending: null,
+  measurementContext: null,
+  externalRefreshPending: false,
+  externalRefreshAt: 0,
   pollingTimer: null,
   reconnectTimer: null,
 };
@@ -63,6 +67,17 @@ function formatText(value) {
     return "--";
   }
   return String(value);
+}
+
+function formatJsonInline(value) {
+  if (value === null || value === undefined) {
+    return "--";
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function formatTermination(readTermination, writeTermination) {
@@ -132,6 +147,13 @@ function applyConfigSnapshot(config) {
   setControlsEnabled(!config.read_only);
   setRecipeControlsEnabled(!config.read_only);
   renderConfig(config);
+}
+
+function prettyJson(value) {
+  if (value === null || value === undefined) {
+    return "--";
+  }
+  return JSON.stringify(value, null, 2);
 }
 
 function setControlsEnabled(enabled) {
@@ -258,6 +280,7 @@ function render(data) {
   renderField(field, switchHeater);
   renderPressure(pressure);
   renderRecipeStatus(data.recipe || {});
+  renderExternalMeasurementsFromState(data);
   recordHistory(data);
   renderCharts();
 
@@ -269,6 +292,111 @@ function render(data) {
     addEvent(data.error);
     state.lastError = data.error;
   }
+}
+
+function renderExternalMeasurementsFromState(data) {
+  const recipe = data.recipe || {};
+  const external = recipe.external_measurement || null;
+  const context = {
+    timestamp_unix_s: data.timestamp,
+    timestamp_iso: new Date(data.timestamp * 1000).toISOString(),
+    sample_temperature_K: data.temperature && data.temperature.sample
+      ? data.temperature.sample.temperature_K
+      : null,
+    field_T: data.field ? data.field.B_T : null,
+    safe_to_measure: data.safety ? data.safety.safe_to_measure : null,
+  };
+  if (!state.measurementContext) {
+    state.measurementContext = context;
+  }
+  if (!state.externalMeasurementPending && external && recipe.status === "waiting_external_measurement") {
+    state.externalMeasurementPending = {
+      pending: true,
+      ...external,
+      recipe_status: recipe.status,
+      sample_temperature_K: context.sample_temperature_K,
+      field_T: context.field_T,
+      safe_to_measure: context.safe_to_measure,
+    };
+  }
+  renderExternalMeasurements();
+  maybeRefreshExternalMeasurements();
+}
+
+function renderExternalMeasurements() {
+  const pending = state.externalMeasurementPending || { pending: false };
+  const context = state.measurementContext || {};
+  const pendingActive = Boolean(pending.pending);
+
+  setBadge(
+    "externalPendingBadge",
+    pendingActive ? "Pending request" : "No pending request",
+    pendingActive ? "warn" : "neutral",
+  );
+  setText("externalPending", pendingActive ? "Yes" : "No");
+  setText("externalMode", formatText(pending.mode));
+  setText("externalRequestSignal", formatText(pending.request_signal));
+  setText("externalCompletionSignal", formatText(pending.completion_signal));
+  setText("externalFailureSignal", formatText(pending.failure_signal));
+  setText("externalRecipeStatus", formatText(pending.recipe_status));
+  setText(
+    "externalTimeout",
+    pending.timeout_s === null || pending.timeout_s === undefined
+      ? "--"
+      : formatUnit(pending.timeout_s, "s", 0),
+  );
+  setText("externalMessage", formatText(pending.message));
+
+  setText(
+    "externalContextTimestamp",
+    context.timestamp_iso || "--",
+  );
+  setText(
+    "externalContextSampleTemperature",
+    formatUnit(context.sample_temperature_K, "K", 4),
+  );
+  setText("externalContextField", formatUnit(context.field_T, "T", 4));
+  setText("externalContextSafe", formatBool(context.safe_to_measure));
+
+  setText("externalPendingPayload", prettyJson(pending));
+  setText("externalContextPayload", prettyJson(context));
+  setText(
+    "externalCompletePayloadExample",
+    prettyJson({
+      request_signal: pending.request_signal || "measure_iv",
+      status: "completed",
+      message: "Saved data to LabVIEW output",
+      metadata: {
+        file_path: "C:/labdata/iv.csv",
+        points: 123,
+        instrument: "LabVIEW",
+      },
+    }),
+  );
+}
+
+function maybeRefreshExternalMeasurements() {
+  const now = Date.now();
+  if (state.externalRefreshPending || now - state.externalRefreshAt < 500) {
+    return;
+  }
+  state.externalRefreshPending = true;
+  state.externalRefreshAt = now;
+  Promise.all([
+    fetchJson("/external-measurements/pending"),
+    fetchJson("/measurement-context"),
+  ])
+    .then(([pending, context]) => {
+      state.externalMeasurementPending = pending;
+      state.measurementContext = context;
+      renderExternalMeasurements();
+    })
+    .catch(() => {
+      // Keep the last rendered values from /state if the dedicated endpoints fail temporarily.
+    })
+    .finally(() => {
+      state.externalRefreshPending = false;
+    });
 }
 
 function renderRecipeStatus(recipe) {
@@ -300,6 +428,17 @@ function renderRecipeStatus(recipe) {
     external.timeout_s === null || external.timeout_s === undefined
       ? "--"
       : formatUnit(external.timeout_s, "s", 0),
+  );
+  const lastSignal = recipe.last_signal || {};
+  setText(
+    "recipeLastSignalDetail",
+    lastSignal.signal
+      ? `${lastSignal.signal}${lastSignal.message ? ` | ${lastSignal.message}` : ""}`
+      : "--",
+  );
+  setText(
+    "recipeLastSignalMetadataDetail",
+    formatJsonInline(lastSignal.metadata),
   );
   updateRecipeControlState(status);
 }
@@ -1160,6 +1299,49 @@ function recipeStepSummary(step) {
   return formatText(step.type);
 }
 
+function pointMeasurementTemplateStep() {
+  return {
+    type: "external_measurement",
+    mode: "point",
+    request_signal: "measure_iv",
+    completion_signal: "measure_iv.completed",
+    failure_signal: "measure_iv.failed",
+    timeout_s: 600,
+    message: "Run IV measurement in LabVIEW",
+  };
+}
+
+function continuousMeasurementTemplateSteps() {
+  return [
+    {
+      type: "external_measurement",
+      mode: "start",
+      request_signal: "R_vs_T.start",
+      completion_signal: "R_vs_T.started",
+      failure_signal: "R_vs_T.failed",
+      timeout_s: 30,
+      message: "Start LabVIEW continuous acquisition",
+    },
+    {
+      type: "ramp_temperature",
+      loop: "sample",
+      target_K: 300,
+      rate_K_per_min: 1.0,
+      tolerance_K: 0.2,
+      stable_s: 0,
+    },
+    {
+      type: "external_measurement",
+      mode: "stop",
+      request_signal: "R_vs_T.stop",
+      completion_signal: "R_vs_T.stopped",
+      failure_signal: "R_vs_T.failed",
+      timeout_s: 30,
+      message: "Stop LabVIEW continuous acquisition",
+    },
+  ];
+}
+
 function renderSavedRecipes() {
   const select = el("savedRecipeSelect");
   if (!select) {
@@ -1420,6 +1602,14 @@ function bindRecipes() {
   el("recipeStepType").addEventListener("change", syncRecipeStepInputs);
   el("addRecipeStepButton").addEventListener("click", () => {
     state.recipeSteps.push(currentRecipeStepFromForm());
+    renderRecipeSteps();
+  });
+  el("addPointMeasurementTemplateButton").addEventListener("click", () => {
+    state.recipeSteps.push(pointMeasurementTemplateStep());
+    renderRecipeSteps();
+  });
+  el("addContinuousMeasurementTemplateButton").addEventListener("click", () => {
+    state.recipeSteps.push(...continuousMeasurementTemplateSteps());
     renderRecipeSteps();
   });
   el("clearRecipeButton").addEventListener("click", () => {

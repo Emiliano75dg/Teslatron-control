@@ -1,4 +1,12 @@
 version: 1
+# LabVIEW coordination note:
+# If LabVIEW is the external orchestrator for electrical acquisition, the
+# cryostat service can expose:
+# - GET /measurement-context
+# - GET /external-measurements/pending
+# - POST /external-measurements/complete
+# Keep the SCPI instrument ownership clear to avoid two clients trying to drive
+# the same resource at once.
 transport:
   default_timeout_s: 5.0
   command_termination: "\n"

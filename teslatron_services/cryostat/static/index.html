@@ -27,6 +27,7 @@
       <button class="tab-button" type="button" data-tab="plots">Plots</button>
       <button class="tab-button" type="button" data-tab="commands">Commands</button>
       <button class="tab-button" type="button" data-tab="recipes">Recipes</button>
+      <button class="tab-button" type="button" data-tab="external">External Measurements</button>
       <button class="tab-button" type="button" data-tab="config">Config</button>
     </nav>
 
@@ -345,9 +346,24 @@
         </div>
         <div class="recipe-grid">
           <form id="recipeForm" class="recipe-builder">
+            <div class="recipe-help-banner">
+              <strong>External measurements with LabVIEW</strong>
+              <span>
+                Use <code>external_measurement</code> steps when LabVIEW or another program must
+                acknowledge a stable-point measurement or run during a temperature/field ramp.
+              </span>
+            </div>
             <label>Recipe name
               <input name="name" type="text" value="Cryostat recipe">
             </label>
+            <div class="recipe-template-row">
+              <button id="addPointMeasurementTemplateButton" class="ghost" type="button">
+                Add point template
+              </button>
+              <button id="addContinuousMeasurementTemplateButton" class="ghost" type="button">
+                Add continuous-ramp template
+              </button>
+            </div>
             <div class="recipe-add-row">
               <label>Saved recipes
                 <select id="savedRecipeSelect"></select>
@@ -452,7 +468,99 @@
               <dt>Completion signal</dt><dd id="recipeExternalCompletionSignalDetail">--</dd>
               <dt>Failure signal</dt><dd id="recipeExternalFailureSignalDetail">--</dd>
               <dt>Timeout</dt><dd id="recipeExternalTimeoutDetail">--</dd>
+              <dt>Last signal</dt><dd id="recipeLastSignalDetail">--</dd>
+              <dt>Last metadata</dt><dd id="recipeLastSignalMetadataDetail">--</dd>
             </dl>
+            <article class="external-guide-card">
+              <h3>LabVIEW flow</h3>
+              <ol class="guide-list">
+                <li>Poll <code>GET /external-measurements/pending</code> to detect a request.</li>
+                <li>Poll <code>GET /measurement-context</code> at about 1-5 Hz during acquisition.</li>
+                <li>Complete with <code>POST /external-measurements/complete</code>.</li>
+              </ol>
+              <dl class="dense-list external-guide-list">
+                <dt>Point mode</dt><dd>Pause recipe, measure, then acknowledge completion or failure.</dd>
+                <dt>Start mode</dt><dd>Confirm acquisition started, then let the ramp proceed.</dd>
+                <dt>Stop mode</dt><dd>Confirm acquisition stopped before the recipe continues.</dd>
+                <dt>Preferred fields</dt><dd><code>sample_temperature_K</code>, <code>field_T</code>, <code>safe_to_measure</code></dd>
+              </dl>
+            </article>
+            <article class="external-guide-card">
+              <h3>Endpoint summary</h3>
+              <ul class="endpoint-list">
+                <li><code>GET /measurement-context</code></li>
+                <li><code>GET /external-measurements/pending</code></li>
+                <li><code>POST /external-measurements/complete</code></li>
+                <li><code>POST /recipes/signal</code></li>
+              </ul>
+              <p class="muted">
+                Keep explicit field names in LabVIEW. Do not rely on anonymous arrays like
+                <code>[T, B]</code>.
+              </p>
+              <p class="muted">
+                LabVIEW may poll these endpoints continuously. When no external measurement is
+                active, <code>/external-measurements/pending</code> returns <code>{"pending": false}</code>
+                while <code>/measurement-context</code> still returns the latest available context.
+              </p>
+            </article>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel external-panel view-section hidden" data-view="external">
+        <div class="panel-heading">
+          <h2>External Measurements</h2>
+          <span id="externalPendingBadge" class="badge neutral">No pending request</span>
+        </div>
+        <div class="external-grid">
+          <article class="external-card">
+            <h3>Live status</h3>
+            <dl class="dense-list">
+              <dt>Pending</dt><dd id="externalPending">--</dd>
+              <dt>Mode</dt><dd id="externalMode">--</dd>
+              <dt>Request signal</dt><dd id="externalRequestSignal">--</dd>
+              <dt>Completion signal</dt><dd id="externalCompletionSignal">--</dd>
+              <dt>Failure signal</dt><dd id="externalFailureSignal">--</dd>
+              <dt>Recipe status</dt><dd id="externalRecipeStatus">--</dd>
+              <dt>Timeout</dt><dd id="externalTimeout">--</dd>
+              <dt>Message</dt><dd id="externalMessage">--</dd>
+            </dl>
+          </article>
+          <article class="external-card">
+            <h3>Measurement context</h3>
+            <dl class="dense-list">
+              <dt>Timestamp</dt><dd id="externalContextTimestamp">--</dd>
+              <dt>Sample T</dt><dd id="externalContextSampleTemperature">--</dd>
+              <dt>Field</dt><dd id="externalContextField">--</dd>
+              <dt>Safe to measure</dt><dd id="externalContextSafe">--</dd>
+            </dl>
+          </article>
+          <article class="external-card wide">
+            <h3>Payload preview for LabVIEW</h3>
+            <div class="external-payload-grid">
+              <div>
+                <h4><code>GET /external-measurements/pending</code></h4>
+                <pre id="externalPendingPayload" class="config-json">--</pre>
+              </div>
+              <div>
+                <h4><code>GET /measurement-context</code></h4>
+                <pre id="externalContextPayload" class="config-json">--</pre>
+              </div>
+            </div>
+          </article>
+          <article class="external-card wide">
+            <h3>Completion payload example</h3>
+            <pre id="externalCompletePayloadExample" class="config-json">--</pre>
+          </article>
+          <article class="external-card wide">
+            <h3>Polling behavior</h3>
+            <p class="muted">
+              LabVIEW can poll these endpoints at any time. If there is no active external
+              request, <code>GET /external-measurements/pending</code> returns
+              <code>{"pending": false}</code>. The lightweight
+              <code>GET /measurement-context</code> endpoint still returns the latest available
+              sample temperature, field, and safety context without changing recipe state.
+            </p>
           </article>
         </div>
       </section>
