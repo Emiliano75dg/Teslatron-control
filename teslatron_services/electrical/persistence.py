@@ -2,14 +2,115 @@ from __future__ import annotations
 
 import csv
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 
-class JsonlMeasurementWriter:
+@dataclass
+class RunArtifactPaths:
+    run_id: str
+    run_slug: str
+    run_dir: Path
+    jsonl_path: Path
+    csv_path: Path
+    metadata_path: Path
+    config_snapshot_path: Path
+    cryostat_snapshot_start_path: Path
+    cryostat_snapshot_end_path: Path
+
+    def output_paths(self) -> dict[str, str]:
+        return {
+            "jsonl": str(self.jsonl_path),
+            "electrical_csv": str(self.csv_path),
+            "metadata": str(self.metadata_path),
+            "config_snapshot": str(self.config_snapshot_path),
+            "cryostat_snapshot_start": str(self.cryostat_snapshot_start_path),
+            "cryostat_snapshot_end": str(self.cryostat_snapshot_end_path),
+        }
+
+
+class RunArtifactStore:
     def __init__(self, save_dir: str):
         self.save_dir = Path(save_dir)
+        self._active_runs: dict[str, RunArtifactPaths] = {}
+
+    def begin_run(self, run_id: str) -> RunArtifactPaths:
+        active = self._active_runs.get(run_id)
+        if active is not None:
+            return active
+
+        base_slug = _slug(run_id)
+        today = datetime.now().strftime("%Y-%m-%d")
+        date_dir = self.save_dir / today
+        run_dir = _next_available_directory(date_dir / base_slug)
+        run_slug = run_dir.name
+        paths = RunArtifactPaths(
+            run_id=run_id,
+            run_slug=run_slug,
+            run_dir=run_dir,
+            jsonl_path=run_dir / f"{run_slug}.jsonl",
+            csv_path=run_dir / f"{run_slug}_electrical.csv",
+            metadata_path=run_dir / "metadata.json",
+            config_snapshot_path=run_dir / "config_snapshot.json",
+            cryostat_snapshot_start_path=run_dir / "cryostat_snapshot_start.json",
+            cryostat_snapshot_end_path=run_dir / "cryostat_snapshot_end.json",
+        )
+        self._active_runs[run_id] = paths
+        return paths
+
+    def paths_for(self, run_id: str) -> RunArtifactPaths:
+        active = self._active_runs.get(run_id)
+        if active is not None:
+            return active
+
+        base_slug = _slug(run_id)
+        today = datetime.now().strftime("%Y-%m-%d")
+        run_dir = self.save_dir / today / base_slug
+        return RunArtifactPaths(
+            run_id=run_id,
+            run_slug=base_slug,
+            run_dir=run_dir,
+            jsonl_path=run_dir / f"{base_slug}.jsonl",
+            csv_path=run_dir / f"{base_slug}_electrical.csv",
+            metadata_path=run_dir / "metadata.json",
+            config_snapshot_path=run_dir / "config_snapshot.json",
+            cryostat_snapshot_start_path=run_dir / "cryostat_snapshot_start.json",
+            cryostat_snapshot_end_path=run_dir / "cryostat_snapshot_end.json",
+        )
+
+    def initialize_run(
+        self,
+        run_id: str,
+        *,
+        metadata: dict[str, Any],
+        config_snapshot: dict[str, Any],
+        cryostat_snapshot_start: dict[str, Any],
+    ) -> RunArtifactPaths:
+        paths = self.begin_run(run_id)
+        paths.run_dir.mkdir(parents=True, exist_ok=True)
+        _write_json(paths.metadata_path, metadata)
+        _write_json(paths.config_snapshot_path, config_snapshot)
+        _write_json(paths.cryostat_snapshot_start_path, cryostat_snapshot_start)
+        return paths
+
+    def update_metadata(self, run_id: str, metadata: dict[str, Any]) -> Path:
+        paths = self.begin_run(run_id)
+        paths.run_dir.mkdir(parents=True, exist_ok=True)
+        _write_json(paths.metadata_path, metadata)
+        return paths.metadata_path
+
+    def write_cryostat_snapshot_end(self, run_id: str, snapshot: dict[str, Any]) -> Path:
+        paths = self.begin_run(run_id)
+        paths.run_dir.mkdir(parents=True, exist_ok=True)
+        _write_json(paths.cryostat_snapshot_end_path, snapshot)
+        return paths.cryostat_snapshot_end_path
+
+
+class JsonlMeasurementWriter:
+    def __init__(self, save_dir: str, *, artifacts: RunArtifactStore | None = None):
+        self._artifacts = artifacts or RunArtifactStore(save_dir)
 
     def append_event(self, run_id: str, event: dict[str, Any]) -> Path:
         path = self.run_path(run_id)
@@ -19,8 +120,7 @@ class JsonlMeasurementWriter:
         return path
 
     def run_path(self, run_id: str) -> Path:
-        today = datetime.now().strftime("%Y-%m-%d")
-        return self.save_dir / today / f"{_slug(run_id)}.jsonl"
+        return self._artifacts.paths_for(run_id).jsonl_path
 
 
 class ElectricalCsvMeasurementWriter:
@@ -39,28 +139,20 @@ class ElectricalCsvMeasurementWriter:
         "cryostat_timestamp",
     ]
 
-    def __init__(self, save_dir: str):
-        self.save_dir = Path(save_dir)
+    def __init__(self, save_dir: str, *, artifacts: RunArtifactStore | None = None):
+        self._artifacts = artifacts or RunArtifactStore(save_dir)
         self._active_runs: dict[str, _CsvRunState] = {}
 
     def begin_run(self, run_id: str) -> Path:
-        run_slug = _slug(run_id)
-        today = datetime.now().strftime("%Y-%m-%d")
-        base_dir = self.save_dir / today / run_slug
-        target_dir = _next_available_directory(base_dir)
-        csv_path = target_dir / f"{target_dir.name}_electrical.csv"
-        target_dir.mkdir(parents=True, exist_ok=True)
-        state = _CsvRunState(path=csv_path, columns=list(self._BASE_COLUMNS))
-        self._active_runs[run_id] = state
+        csv_path = self._artifacts.begin_run(run_id).csv_path
+        self._active_runs[run_id] = _CsvRunState(path=csv_path, columns=list(self._BASE_COLUMNS))
         return csv_path
 
     def csv_path(self, run_id: str) -> Path:
         state = self._active_runs.get(run_id)
         if state is not None:
             return state.path
-        run_slug = _slug(run_id)
-        today = datetime.now().strftime("%Y-%m-%d")
-        return self.save_dir / today / run_slug / f"{run_slug}_electrical.csv"
+        return self._artifacts.paths_for(run_id).csv_path
 
     def append_row(self, run_id: str, row: dict[str, Any]) -> Path:
         state = self._active_runs.get(run_id)
@@ -169,3 +261,11 @@ def _slug(value: str) -> str:
             chars.append("_")
     slug = "".join(chars).strip("_")
     return slug[:80] or "run"
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True, default=str),
+        encoding="utf-8",
+    )

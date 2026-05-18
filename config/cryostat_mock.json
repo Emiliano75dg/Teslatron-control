@@ -1,0 +1,10 @@
+{
+  "cryostat": {
+    "backend": "mock",
+    "read_only": false,
+    "poll_interval_s": 1.0,
+    "log_interval_s": 20.0,
+    "log_dir": "data",
+    "recipe_dir": "data/recipes"
+  }
+}

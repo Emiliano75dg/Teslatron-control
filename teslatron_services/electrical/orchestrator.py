@@ -6,14 +6,18 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from time import monotonic, time
-from time import sleep as blocking_sleep
 from typing import Any, Awaitable, Callable
 from urllib.request import Request, urlopen
 
 from .config import ElectricalServiceConfig, InstrumentConfig, MeasurementPlanConfig
 from .drivers.base import ElectricalInstrumentDriver
 from .drivers.mock import MockElectricalDriver
-from .persistence import ElectricalCsvMeasurementWriter, JsonlMeasurementWriter, flatten_measurement
+from .persistence import (
+    ElectricalCsvMeasurementWriter,
+    JsonlMeasurementWriter,
+    RunArtifactStore,
+    flatten_measurement,
+)
 from .state import CryostatCacheState, ElectricalServiceState, MeasurementRunState
 from .vdp import run_vdp_characterization_for_teslatron
 
@@ -35,8 +39,15 @@ class ElectricalMeasurementService:
         self.config = config
         self._cryostat_fetcher = cryostat_fetcher or self._default_cryostat_fetcher
         self._recipe_notifier = recipe_notifier or self._default_recipe_notifier
-        self._writer = JsonlMeasurementWriter(config.measurement_session.save_dir)
-        self._csv_writer = ElectricalCsvMeasurementWriter(config.measurement_session.save_dir)
+        self._artifacts = RunArtifactStore(config.measurement_session.save_dir)
+        self._writer = JsonlMeasurementWriter(
+            config.measurement_session.save_dir,
+            artifacts=self._artifacts,
+        )
+        self._csv_writer = ElectricalCsvMeasurementWriter(
+            config.measurement_session.save_dir,
+            artifacts=self._artifacts,
+        )
         self._state = ElectricalServiceState()
         self._stop_event = asyncio.Event()
         self._run_stop_event = asyncio.Event()
@@ -44,6 +55,10 @@ class ElectricalMeasurementService:
         self._poll_task: asyncio.Task[None] | None = None
         self._run_task: asyncio.Task[None] | None = None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="electrical-service")
+        self._run_config_snapshot: dict[str, Any] | None = None
+        self._run_initial_cryostat_snapshot: dict[str, Any] | None = None
+        self._run_final_cryostat_snapshot: dict[str, Any] | None = None
+        self._run_artifacts_finalized = False
         self._instruments = instruments or {
             name: _build_driver(instrument_config)
             for name, instrument_config in config.instruments.items()
@@ -69,7 +84,7 @@ class ElectricalMeasurementService:
             self._poll_task = None
         for instrument in self._instruments.values():
             instrument.shutdown()
-        self._executor.shutdown(wait=True, cancel_futures=True)
+        await asyncio.to_thread(self._executor.shutdown, wait=True, cancel_futures=True)
 
     def config_snapshot(self) -> dict[str, Any]:
         payload = self.config.to_dict()
@@ -149,7 +164,9 @@ class ElectricalMeasurementService:
         if self._run_task is not None and not self._run_task.done():
             raise ValueError("A measurement run is already active")
 
+        await self.refresh_cryostat_state()
         self._run_stop_event = asyncio.Event()
+        paths = self._artifacts.begin_run(run_id)
         csv_path = self._csv_writer.begin_run(run_id)
         self._state.run = MeasurementRunState(
             status="running",
@@ -160,13 +177,13 @@ class ElectricalMeasurementService:
             max_points=max_points,
             started_at=time(),
             run_start_monotonic_s=monotonic(),
-            output_path=str(self._writer.run_path(run_id)),
+            output_path=str(paths.jsonl_path),
             electrical_csv_path=str(csv_path),
-            output_paths={
-                "jsonl": str(self._writer.run_path(run_id)),
-                "electrical_csv": str(csv_path),
-            },
+            metadata_path=str(paths.metadata_path),
+            output_paths=paths.output_paths(),
         )
+        self._run_artifacts_finalized = False
+        await self._initialize_run_artifacts()
         self._run_task = asyncio.create_task(
             self._periodic_run_loop(
                 require_safe_to_measure=require_safe_to_measure,
@@ -186,7 +203,9 @@ class ElectricalMeasurementService:
             raise ValueError("A measurement run is already active")
         run_id = _recipe_run_id(plan.id, signal)
         primary_instrument = plan.steps[0].instrument
+        await self.refresh_cryostat_state()
         self._run_stop_event = asyncio.Event()
+        paths = self._artifacts.begin_run(run_id)
         csv_path = self._csv_writer.begin_run(run_id)
         self._state.run = MeasurementRunState(
             status="running",
@@ -196,13 +215,13 @@ class ElectricalMeasurementService:
             trigger_signal=signal,
             started_at=time(),
             run_start_monotonic_s=monotonic(),
-            output_path=str(self._writer.run_path(run_id)),
+            output_path=str(paths.jsonl_path),
             electrical_csv_path=str(csv_path),
-            output_paths={
-                "jsonl": str(self._writer.run_path(run_id)),
-                "electrical_csv": str(csv_path),
-            },
+            metadata_path=str(paths.metadata_path),
+            output_paths=paths.output_paths(),
         )
+        self._run_artifacts_finalized = False
+        await self._initialize_run_artifacts()
         self._run_task = asyncio.create_task(
             self._execute_recipe_plan(plan, signal, message),
             name=f"electrical-plan-{plan.id}",
@@ -211,16 +230,81 @@ class ElectricalMeasurementService:
 
     async def stop_run(self) -> dict[str, Any]:
         self._run_stop_event.set()
-        if self._run_task is not None:
+        run_task = self._run_task
+        if run_task is not None:
             try:
-                await self._run_task
+                await run_task
             except asyncio.CancelledError:
                 pass
-            self._run_task = None
+            finally:
+                if self._run_task is run_task:
+                    self._run_task = None
         if self._state.run.status == "running":
             self._state.run.status = "stopped"
             self._state.run.stopped_at = time()
+        await self._finalize_run_artifacts()
         return self.run_status()
+
+    async def _initialize_run_artifacts(self) -> None:
+        run = self._state.run
+        if run.run_id is None:
+            return
+        self._run_config_snapshot = self.config_snapshot()
+        self._run_initial_cryostat_snapshot = self._cryostat_snapshot_sync()
+        self._run_final_cryostat_snapshot = None
+        metadata = self._build_run_metadata()
+        self._artifacts.initialize_run(
+            run.run_id,
+            metadata=metadata,
+            config_snapshot=self._run_config_snapshot,
+            cryostat_snapshot_start=self._run_initial_cryostat_snapshot,
+        )
+
+    async def _persist_run_metadata(self) -> None:
+        run = self._state.run
+        if run.run_id is None or self._run_config_snapshot is None:
+            return
+        self._artifacts.update_metadata(
+            run.run_id,
+            self._build_run_metadata(),
+        )
+
+    async def _finalize_run_artifacts(self) -> None:
+        run = self._state.run
+        if run.run_id is None or self._run_artifacts_finalized:
+            return
+        try:
+            await self.refresh_cryostat_state()
+        except Exception:
+            logger.debug("Failed to refresh cryostat state during run finalization", exc_info=True)
+        self._run_final_cryostat_snapshot = self._cryostat_snapshot_sync()
+        self._artifacts.write_cryostat_snapshot_end(
+            run.run_id,
+            self._run_final_cryostat_snapshot,
+        )
+        await self._persist_run_metadata()
+        self._run_artifacts_finalized = True
+
+    def _build_run_metadata(self) -> dict[str, Any]:
+        run = self._state.run
+        started_at = run.started_at
+        stopped_at = run.stopped_at
+        return {
+            "run_id": run.run_id,
+            "plan_id": run.plan_id,
+            "instrument": run.instrument,
+            "started_at_unix_s": started_at,
+            "started_at_iso": _timestamp_iso_utc(started_at) if started_at is not None else None,
+            "stopped_at_unix_s": stopped_at,
+            "stopped_at_iso": _timestamp_iso_utc(stopped_at) if stopped_at is not None else None,
+            "status": run.status,
+            "points_acquired": run.points_acquired,
+            "output_paths": dict(run.output_paths),
+            "metadata_path": run.metadata_path,
+            "electrical_service_config_snapshot": self._run_config_snapshot,
+            "initial_cryostat_snapshot": self._run_initial_cryostat_snapshot,
+            "final_cryostat_snapshot": self._run_final_cryostat_snapshot,
+        }
 
     async def _poll_cryostat_loop(self) -> None:
         interval_s = max(0.2, self.config.cryostat.poll_interval_s)
@@ -240,20 +324,21 @@ class ElectricalMeasurementService:
             while not self._run_stop_event.is_set():
                 await self.refresh_cryostat_state()
                 if require_safe_to_measure and not self._safe_to_measure():
-                    await self._run_blocking(blocking_sleep, min(run.interval_s, 0.5))
+                    await self._wait_for_run_stop(min(run.interval_s, 0.5))
                     continue
                 event = await self._acquire_measurement(
                     run.instrument, run.run_id, run.plan_id or "periodic"
                 )
                 run.points_acquired += 1
                 run.last_event = event
+                await self._persist_run_metadata()
                 if run.max_points is not None and run.points_acquired >= run.max_points:
                     run.status = "completed"
                     run.stopped_at = time()
                     self._run_stop_event.set()
                     break
                 if run.max_points is None:
-                    await self._run_blocking(blocking_sleep, run.interval_s)
+                    await self._wait_for_run_stop(run.interval_s)
             if run.status == "running":
                 run.status = "stopped"
                 run.stopped_at = time()
@@ -262,6 +347,8 @@ class ElectricalMeasurementService:
             run.status = "error"
             run.error = str(exc)
             run.stopped_at = time()
+        finally:
+            await self._finalize_run_artifacts()
 
     async def _execute_recipe_plan(
         self,
@@ -298,6 +385,11 @@ class ElectricalMeasurementService:
                 if last_event.get("csv_path"):
                     run.output_path = str(last_event["csv_path"])
                     run.output_paths["csv"] = str(last_event["csv_path"])
+                if last_event.get("report_json_path"):
+                    run.output_paths["report_json"] = str(last_event["report_json_path"])
+                if last_event.get("report_md_path"):
+                    run.output_paths["report_md"] = str(last_event["report_md_path"])
+                await self._persist_run_metadata()
             run.status = "completed"
             run.stopped_at = time()
             await self._notify_plan_completion(plan, signal, "completed", message)
@@ -312,6 +404,8 @@ class ElectricalMeasurementService:
             run.error = str(exc)
             run.stopped_at = time()
             await self._notify_plan_completion(plan, signal, "failed", str(exc))
+        finally:
+            await self._finalize_run_artifacts()
 
     async def _acquire_measurement(
         self,
@@ -351,7 +445,7 @@ class ElectricalMeasurementService:
             return event
 
     async def _run_vdp_characterization(self, *, run_id: str) -> dict[str, Any]:
-        output_dir = self._writer.run_path(run_id).parent
+        output_dir = self._artifacts.paths_for(run_id).run_dir.parent
         async with self._resource_lock:
             return await self._run_blocking(
                 run_vdp_characterization_for_teslatron,
@@ -418,6 +512,12 @@ class ElectricalMeasurementService:
             self._executor,
             lambda: func(*args, **kwargs),
         )
+
+    async def _wait_for_run_stop(self, timeout_s: float) -> None:
+        try:
+            await asyncio.wait_for(self._run_stop_event.wait(), timeout=timeout_s)
+        except TimeoutError:
+            pass
 
     def _safe_to_measure(self) -> bool:
         if not self._state.cryostat.connected:

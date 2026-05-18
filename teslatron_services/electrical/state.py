@@ -29,6 +29,7 @@ class MeasurementRunState:
     last_event: dict[str, Any] | None = None
     output_path: str | None = None
     electrical_csv_path: str | None = None
+    metadata_path: str | None = None
     output_paths: dict[str, str] = field(default_factory=dict)
     error: str | None = None
 

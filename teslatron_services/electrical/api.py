@@ -79,6 +79,15 @@ def create_app(
     async def get_runs() -> dict:
         return {"run": service().run_status()}
 
+    @app.get("/runs/current")
+    async def get_current_run() -> dict:
+        run = service().run_status()
+        return {
+            "run": run,
+            "output_paths": run.get("output_paths", {}),
+            "metadata_path": run.get("metadata_path"),
+        }
+
     @app.get("/plans")
     async def get_plans() -> dict:
         return {"plans": service().list_plans()}
