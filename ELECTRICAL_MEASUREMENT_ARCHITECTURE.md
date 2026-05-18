@@ -165,6 +165,119 @@ state and stamp each measurement with:
 
 Measurement plans should support multiple trigger types.
 
+In practice, the service should support two high-level operating modes from the
+start:
+
+- `continuous`: acquire while cryostat variables are evolving
+- `command-driven`: acquire only when an explicit command or recipe event says
+  so
+
+These two modes should share the same driver layer and persistence model, but
+use different scheduling policies.
+
+## Operating modes
+
+### 1. Continuous acquisition
+
+This mode is useful when electrical data must be collected while temperature or
+magnetic field are changing continuously.
+
+Typical examples:
+
+- resistance versus temperature during a ramp
+- current leakage while field is sweeping
+- continuous voltage/current monitoring during pressure stabilization
+
+Recommended behavior:
+
+- run on its own cadence, independent from cryostat log cadence
+- optionally downsample or average at save time
+- attach the latest cryostat snapshot to every measurement event
+- allow `safe_to_measure` to pause acquisition if the cryostat enters an unsafe
+  state
+
+Recommended config fields:
+
+- acquisition interval
+- instrument action
+- optional route definition
+- save-every-point versus save-batched policy
+- optional pause/resume rules tied to cryostat safety
+
+### 2. Command-driven or recipe-driven acquisition
+
+This mode is useful when the electrical measurement is a discrete experiment
+step rather than a background stream.
+
+Typical examples:
+
+- reach stable temperature, then perform one IV sweep
+- change field, then measure resistance once
+- wait for operator confirmation, then re-route the matrix and repeat
+
+Recommended behavior:
+
+- the electrical service exposes an explicit command API
+- the cryostat recipe can trigger named electrical actions
+- electrical plans can acknowledge completion back to the cryostat layer
+
+This is the mode that best supports workflows such as:
+
+1. ramp temperature
+2. wait for stability
+3. perform IV measurement
+4. change temperature
+5. repeat the same IV measurement
+
+That sequence should not be encoded as ad hoc code in the cryostat backend.
+Instead, the cryostat recipe should emit synchronization points and the
+electrical service should execute the requested measurement plan when those
+points are reached.
+
+## Completion handshake with cryostat recipes
+
+For recipe-driven measurements, the trigger alone is not enough. The cryostat
+recipe must also know when the electrical measurement has actually finished so
+that it can continue safely to the next step.
+
+This means the integration must be a two-phase handshake:
+
+1. the cryostat recipe emits a measurement request
+2. the electrical service starts the requested plan
+3. the electrical service runs the real measurement workflow
+4. the electrical service reports a terminal result
+5. only then does the cryostat recipe continue
+
+The terminal result should distinguish at least:
+
+- `completed`
+- `failed`
+- `aborted`
+- `timed_out`
+
+This is important because "measurement started" and "measurement completed" are
+not equivalent, especially for:
+
+- IV sweeps that take several seconds or minutes
+- switch-matrix sequences with settling delays
+- multi-instrument measurements where one device may fail after the trigger
+
+## Recommended recipe integration pattern
+
+The cleanest pattern is:
+
+1. cryostat recipe reaches the desired physical condition
+2. cryostat recipe emits a named signal such as `measure_iv`
+3. cryostat recipe enters a wait state for measurement completion
+4. electrical service receives the signal and starts the matching plan
+5. electrical service emits a completion signal such as
+   `measurement_completed:measure_iv` or `measurement_failed:measure_iv`
+6. cryostat recipe resumes or aborts based on that result
+
+In other words, recipe-driven electrical measurements should behave like
+blocking recipe steps from the point of view of the cryostat workflow, even if
+the measurement execution itself is asynchronous internally.
+
 ### Time-based
 
 - every `N` seconds
@@ -186,6 +299,65 @@ Measurement plans should support multiple trigger types.
 
 - operator presses measure
 - client calls `POST /measurements/start`
+
+### Recommended trigger vocabulary
+
+To cover the use cases above cleanly, the first plan schema should include:
+
+- `interval`
+  - continuous periodic acquisition during ramps or holds
+- `manual`
+  - an operator or API explicitly starts the measurement
+- `recipe_signal`
+  - the cryostat recipe emits a named signal such as `measure_iv`
+- `cryostat_stable`
+  - measurement starts only after temperature or field stability conditions are
+    satisfied
+
+The important point is that `cryostat_stable` and `recipe_signal` are not the
+same thing:
+
+- `cryostat_stable` is a physical condition
+- `recipe_signal` is a workflow instruction
+
+In many experiments you will want both:
+
+1. the cryostat recipe ramps to a target
+2. the recipe waits until the system is stable
+3. the recipe emits `measure_iv`
+4. the electrical service receives that signal and runs the IV plan
+5. the electrical service emits a terminal completion signal
+6. the cryostat recipe continues only after receiving that completion
+
+## Recommended signal vocabulary
+
+To avoid ambiguity, use separate signal names for:
+
+- request-to-start
+- successful completion
+- unsuccessful completion
+
+For example:
+
+- request: `measure_iv`
+- success: `measure_iv.completed`
+- failure: `measure_iv.failed`
+- abort: `measure_iv.aborted`
+
+An alternative is a generic completion endpoint carrying structured payload:
+
+```json
+{
+  "signal": "measure_iv",
+  "status": "completed",
+  "run_id": "iv_at_4k",
+  "plan_id": "iv_4probe",
+  "message": "Sweep finished successfully"
+}
+```
+
+This second form is preferable because the cryostat service can log and inspect
+the measurement outcome rather than only receiving a plain string.
 
 ## Switch matrix handling
 
@@ -213,11 +385,13 @@ Each plan should describe:
 
 - instruments required
 - optional routes
+- operating mode
 - trigger condition
 - measurement steps
 - settling and timeout rules
 - save policy
 - metadata tags such as sample, operator, contact map, insert
+- completion signaling policy for recipe synchronization
 
 ### Example structure
 
@@ -243,14 +417,37 @@ Each plan should describe:
   },
   "plans": [
     {
-      "id": "iv_4probe",
+      "id": "rt_monitor",
+      "mode": "continuous",
       "trigger": {
-        "type": "cryostat_stable",
-        "temperature_tolerance_K": 0.01,
-        "stable_s": 60
+        "type": "interval",
+        "interval_s": 1.0
+      },
+      "steps": [
+        {
+          "instrument": "pico",
+          "action": "read_current"
+        }
+      ]
+    },
+    {
+      "id": "iv_4probe",
+      "mode": "command-driven",
+      "trigger": {
+        "type": "recipe_signal",
+        "signal": "measure_iv"
+      },
+      "completion": {
+        "notify_recipe": true,
+        "success_signal": "measure_iv.completed",
+        "failure_signal": "measure_iv.failed"
       },
       "route": {
         "matrix": ["A1-B1", "A2-B2"]
+      },
+      "preconditions": {
+        "require_safe_to_measure": true,
+        "sample_temperature_stable": true
       },
       "steps": [
         {
@@ -330,6 +527,7 @@ Recommended measurement record fields:
 - `timestamp`
 - `run_id`
 - `plan_id`
+- `mode`
 - `event_id`
 - `route_id`
 - `instrument`
@@ -361,8 +559,8 @@ The smallest useful first implementation would be:
 1. electrical service with its own FastAPI app
 2. one driver interface plus one mock driver
 3. subscription to cryostat `GET /state` or `WS /ws/state`
-4. one plan type: periodic measurement
-5. one conditional trigger: wait until `safe_to_measure == true`
+4. two modes: continuous periodic measurement and command-driven single plan execution
+5. two trigger types: `interval` and `recipe_signal`
 6. one shared resource lock for the switch matrix
 7. save measurement events to JSONL
 
@@ -371,7 +569,7 @@ After that, add:
 - cryostat-stability triggers
 - route lists for multiplexed measurements
 - SMU sweep actions
-- recipe-signal synchronization
+- recipe completion acknowledgements back to the cryostat layer
 - GUI support
 
 ## Recommended API sketch
@@ -386,9 +584,17 @@ The electrical service could expose:
 - `POST /runs/stop`
 - `POST /plans/start`
 - `POST /plans/stop`
+- `POST /plans/trigger`
+- `POST /plans/recipe-signal`
 - `POST /plans/validate`
 - `GET /results/latest`
 - `WS /ws/state`
+
+On the cryostat side, recipe integration should also support:
+
+- waiting for an external measurement completion signal
+- recording the terminal status of the electrical plan
+- aborting or retrying based on measurement failure
 
 ## Practical recommendation
 

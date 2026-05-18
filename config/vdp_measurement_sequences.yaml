@@ -1,0 +1,268 @@
+version: 1
+assumptions:
+  sample_contacts:
+  - A
+  - B
+  - C
+  - D
+  contact_order: clockwise
+  current_reversal: smu
+  relay_state_between_polarities: unchanged
+  multiplexer: DAQ6510_7709
+  meter_source: B2902B
+defaults:
+  settling_time_s: 0.1
+  repeats: 1
+  contact_check_currents_A:
+  - 1.0e-07
+  - 2.0e-07
+  - 3.0e-07
+  - 4.0e-07
+  - 5.0e-07
+  - 6.0e-07
+  - 7.0e-07
+  - 8.0e-07
+  - 9.000000000000001e-07
+  - 1.0e-06
+  characterization_currents_A:
+  - 1.0e-05
+  - 3.0e-05
+  compliance_V: 10.0
+  contact_check_remote_sense: false
+  characterization_remote_sense: true
+record_fields:
+- sequence_name
+- measurement_id
+- mode
+- current_pair
+- voltage_pair
+- current_set_A
+- current_measured_positive_A
+- current_measured_negative_A
+- voltage_positive_V
+- voltage_negative_V
+- resistance_ohm
+- source_voltage_positive_V
+- source_voltage_negative_V
+- compliance_positive
+- compliance_negative
+- settling_time_s
+- repeat_index
+- timestamp
+- relay_closures
+sequences:
+  contact_check:
+    description: Kelvin local measurements for contact and film continuity diagnostics.
+    mode: kelvin_local_single_channel
+    currents_ref: contact_check_currents_A
+    pair_measurements:
+    - id: R_AB
+      force_pair:
+      - A
+      - B
+      sense_pair:
+      - A
+      - B
+    - id: R_AC
+      force_pair:
+      - A
+      - C
+      sense_pair:
+      - A
+      - C
+    - id: R_AD
+      force_pair:
+      - A
+      - D
+      sense_pair:
+      - A
+      - D
+    - id: R_BC
+      force_pair:
+      - B
+      - C
+      sense_pair:
+      - B
+      - C
+    - id: R_BD
+      force_pair:
+      - B
+      - D
+      sense_pair:
+      - B
+      - D
+    - id: R_CD
+      force_pair:
+      - C
+      - D
+      sense_pair:
+      - C
+      - D
+    per_measurement_steps:
+    - open_all_relays
+    - route_force_and_sense
+    - apply_positive_current
+    - wait_settling
+    - measure_voltage_current_status
+    - apply_negative_current
+    - wait_settling
+    - measure_voltage_current_status
+    - compute_odd_resistance
+    - open_all_relays
+    quality_metrics:
+    - R_mean
+    - R_std
+    - linearity_error
+    - current_reversal_error
+    - compliance_rate
+  full_characterization:
+    description: Sheet resistance, reciprocity, anisotropy or nonuniformity indicators, and Hall configurations.
+    currents_ref: characterization_currents_A
+    blocks:
+      van_der_pauw:
+        mode: nonlocal_four_terminal
+        measurements:
+        - id: R_AB_CD
+          current_pair:
+          - A
+          - B
+          voltage_pair:
+          - C
+          - D
+        - id: R_BC_DA
+          current_pair:
+          - B
+          - C
+          voltage_pair:
+          - D
+          - A
+        - id: R_CD_AB
+          current_pair:
+          - C
+          - D
+          voltage_pair:
+          - A
+          - B
+        - id: R_DA_BC
+          current_pair:
+          - D
+          - A
+          voltage_pair:
+          - B
+          - C
+        outputs:
+        - R_A_from_AB_CD_and_CD_AB
+        - R_B_from_BC_DA_and_DA_BC
+        - sheet_resistance_vdp_iterative
+        - sheet_resistance_vdp_equal_resistance_approximation
+        - vdp_asymmetry
+        sheet_resistance_solver:
+          equation: exp(-pi * R_A / Rs) + exp(-pi * R_B / Rs) - 1
+          method: bisection
+          relative_tolerance: 1.0e-09
+          residual_tolerance: 1.0e-12
+          max_iterations: 200
+          approximation_only_for_diagnostics: Rs ~= 4.53236 * (R_A + R_B) / 2
+          diagnostics:
+          - converged
+          - iterations
+          - residual
+          - R_A_over_R_B
+      reciprocity:
+        mode: nonlocal_four_terminal
+        measurement_pairs:
+        - forward: R_AB_CD
+          reciprocal: R_CD_AB
+        - forward: R_BC_DA
+          reciprocal: R_DA_BC
+        - forward:
+            id: R_AB_DC
+            current_pair:
+            - A
+            - B
+            voltage_pair:
+            - D
+            - C
+          reciprocal:
+            id: R_DC_AB
+            current_pair:
+            - D
+            - C
+            voltage_pair:
+            - A
+            - B
+        - forward:
+            id: R_BC_AD
+            current_pair:
+            - B
+            - C
+            voltage_pair:
+            - A
+            - D
+          reciprocal:
+            id: R_AD_BC
+            current_pair:
+            - A
+            - D
+            voltage_pair:
+            - B
+            - C
+        outputs:
+        - reciprocity_error
+      anisotropy_nonuniformity:
+        mode: derived
+        input_measurements:
+        - R_AB_CD
+        - R_BC_DA
+        - R_CD_AB
+        - R_DA_BC
+        optional_input_measurements:
+        - R_BA_DC
+        - R_CB_AD
+        - R_DC_BA
+        - R_AD_CB
+        outputs:
+        - rotation_spread
+        - vdp_asymmetry
+      hall:
+        mode: nonlocal_four_terminal_with_field
+        requires:
+        - magnetic_field_control_or_manual_field_annotation
+        - sample_thickness_for_bulk_hall_coefficient
+        field_points_T:
+        - +B
+        - -B
+        measurements:
+        - id: H_AC_BD
+          current_pair:
+          - A
+          - C
+          voltage_pair:
+          - B
+          - D
+        - id: H_CA_DB
+          current_pair:
+          - C
+          - A
+          voltage_pair:
+          - D
+          - B
+        - id: H_BD_AC
+          current_pair:
+          - B
+          - D
+          voltage_pair:
+          - A
+          - C
+        - id: H_DB_CA
+          current_pair:
+          - D
+          - B
+          voltage_pair:
+          - C
+          - A
+        outputs:
+        - hall_voltage_odd_B_odd_I
+        - longitudinal_contamination_even_B
+        - hall_coefficient_if_thickness_available
+        - sheet_carrier_density

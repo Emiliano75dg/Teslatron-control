@@ -1,0 +1,31 @@
+version: 1
+description: Example wiring overlay. Copy this file and edit it with the real lab cabling.
+
+# The application starts from config/routing_template.yaml and applies these overrides.
+routing_overrides:
+  matrix:
+    daq_slot: 1
+
+  # Columns are the 7709 matrix columns connected to the four sample contacts.
+  # These are fictitious defaults for development.
+  sample_columns:
+    A: 1
+    B: 2
+    C: 3
+    D: 4
+
+  # Rows are the 7709 matrix rows connected to B2902B channel 1 terminals.
+  # This assumes the one-channel Kelvin/nonlocal experiment.
+  single_channel_kelvin_rows:
+    smu_channel: 1
+    force_hi: 1
+    force_lo: 2
+    sense_hi: 3
+    sense_lo: 4
+
+notes:
+  unused_7709_pole: Keep the unused LO pole isolated unless it is intentionally wired.
+  update_when_known:
+    - DAQ6510 slot containing the 7709
+    - 7709 rows wired to B2902B Force/Sense terminals
+    - 7709 columns wired to sample contacts A/B/C/D
