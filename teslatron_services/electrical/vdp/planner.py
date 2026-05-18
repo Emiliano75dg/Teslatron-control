@@ -38,14 +38,14 @@ def build_plan(
     include_hall: bool = False,
 ) -> list[MeasurementStep]:
     """Build executable measurement steps with numeric 7709 crosspoints.
-    
+
     Converts YAML measurement sequences to ordered MeasurementStep list:
     1. Expand contact pairs (e.g., contact_check has 6 pairs: AB, AC, AD, BC, BD, CD)
     2. Expand current levels (positive and negative for each pair)
     3. Expand repeats (typically 3 times per configuration)
     4. Compute relay closures mapping contacts to multiplexer channels
     5. Return sorted list ready for hardware execution
-    
+
     Args:
         measurement_config: Parsed measurement_sequences.yaml dict with:
             - defaults: settling_time_s, repeats, currents lists
@@ -56,14 +56,14 @@ def build_plan(
             - sample_columns: contact-to-column mapping (A:1, B:2, ...)
             - single_channel_kelvin_rows: force/sense row assignments
         include_hall: If True, include Hall effect measurement steps (optional).
-        
+
     Returns:
         List of MeasurementStep objects, each with:
         - sequence_name, measurement_id, mode, current/voltage pairs
         - current_a: numeric current value (or field strength for Hall)
         - repeat_index: which repeat (0, 1, 2, ...)
         - relay_closures: tuple of DAQ channel numbers to close
-        
+
     Raises:
         KeyError: If required config keys are missing.
         ValueError: If measurement mode is not recognized.
@@ -129,30 +129,30 @@ def relay_closures(
     voltage_pair: tuple[str, str],
 ) -> tuple[int, ...]:
     """Compute relay closures for a measurement configuration.
-    
+
     Maps logical contact pairs (force, sense) to physical relay channels
     in the Keithley 7709 multiplexer via the routing matrix.
-    
+
     For mode='kelvin_local_single_channel':
     - Force current through contacts: current_pair[0] -> force_hi, current_pair[1] -> force_lo
     - Sense voltage between contacts: voltage_pair[0] -> sense_hi, voltage_pair[1] -> sense_lo
-    
+
     The routing template maps:
     - Contacts (A, B, C, D) -> sample columns (typically 1, 2, 3, 4)
     - Row assignments (force_hi, force_lo, sense_hi, sense_lo) -> matrix rows (typically 1, 2, 3, 4)
     - Crosspoint formula computes matrix crosspoint from (row, column)
     - DAQ channel formula computes global DAQ channel from (slot, crosspoint)
-    
+
     Args:
         routing_config: routing_template.yaml dict with matrix, sample_columns, rows.
         mode: Measurement mode ('kelvin_local_single_channel', 'nonlocal_four_terminal', etc.).
         current_pair: Tuple of contact names (e.g., ('A', 'B')) to force current.
         voltage_pair: Tuple of contact names (e.g., ('A', 'B')) to sense voltage.
-        
+
     Returns:
         Tuple of DAQ channel indices to close for this configuration.
         Example: (101, 102, 103, 104) for 4-contact Kelvin measurement.
-        
+
     Raises:
         ValueError: If mode is not recognized in routing_config.
         KeyError: If required routing config fields are missing.
@@ -194,7 +194,9 @@ def relay_closures(
     # Each closure specifies: slot*100 + crosspoint where crosspoint = (row-1)*8 + column
     slot = int(routing_config["matrix"].get("daq_slot", 1))
     return tuple(
-        _daq_channel(slot=slot, crosspoint=_crosspoint(row=rows[row_name], column=sample_columns[contact]))
+        _daq_channel(
+            slot=slot, crosspoint=_crosspoint(row=rows[row_name], column=sample_columns[contact])
+        )
         for row_name, contact in logical
     )
 
@@ -256,7 +258,7 @@ def _pair(value: list[str]) -> tuple[str, str]:
 
 def _crosspoint(*, row: int, column: int) -> int:
     """Compute Keithley 7709 matrix crosspoint from (row, column).
-    
+
     The 7709 has a 6x8 matrix, indexed from 1.
     Crosspoint formula: (row - 1) * 8 + column
     Maps (1,1)→1, (1,8)→8, (2,1)→9, ..., (6,8)→48
@@ -266,7 +268,7 @@ def _crosspoint(*, row: int, column: int) -> int:
 
 def _daq_channel(*, slot: int, crosspoint: int) -> int:
     """Compute global DAQ channel from multiplexer slot and crosspoint.
-    
+
     The DAQ6510 can have multiple switching modules in different slots.
     DAQ channel formula: slot * 100 + crosspoint
     Maps slot1→100-148, slot2→200-248, slot3→300-348

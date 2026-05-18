@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-from dataclasses import dataclass, field, replace
+import json
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
-import json
 
 DEFAULT_INSERT_PROFILE_ID = "fisher_probe"
 DEFAULT_INSERT_PROFILE_NAME = "Fisher probe"
@@ -63,9 +62,7 @@ class SafetyConfig:
 
     def __post_init__(self) -> None:
         if self.min_temperature_K > self.max_temperature_K:
-            raise ValueError(
-                "Cryostat safety min_temperature_K cannot exceed max_temperature_K"
-            )
+            raise ValueError("Cryostat safety min_temperature_K cannot exceed max_temperature_K")
         if self.max_temperature_rate_K_per_min <= 0:
             raise ValueError("Cryostat safety max_temperature_rate_K_per_min must be > 0")
         if self.max_field_T < 0:
@@ -186,9 +183,7 @@ class CryostatServiceConfig:
             )
         if self.active_sample_sensor is not None:
             if self.active_sample_sensor not in self.sample_sensor_presets:
-                raise ValueError(
-                    f"Unknown active_sample_sensor {self.active_sample_sensor!r}"
-                )
+                raise ValueError(f"Unknown active_sample_sensor {self.active_sample_sensor!r}")
             profile = self.active_insert_profile()
             if (
                 profile is not None
@@ -214,9 +209,7 @@ def load_config(path: str | Path | None = None) -> CryostatServiceConfig:
         try:
             import yaml
         except ImportError as exc:
-            raise RuntimeError(
-                "YAML config requires PyYAML. Use JSON or install pyyaml."
-            ) from exc
+            raise RuntimeError("YAML config requires PyYAML. Use JSON or install pyyaml.") from exc
         data = yaml.safe_load(raw) or {}
     else:
         data = json.loads(raw)
@@ -313,7 +306,10 @@ def _insert_profile_from_mapping(
         sample_sensor_presets,
     )
     return InsertProfileConfig(
-        name=data.get("name", DEFAULT_INSERT_PROFILE_NAME if profile_id == DEFAULT_INSERT_PROFILE_ID else profile_id),
+        name=data.get(
+            "name",
+            DEFAULT_INSERT_PROFILE_NAME if profile_id == DEFAULT_INSERT_PROFILE_ID else profile_id,
+        ),
         description=data.get(
             "description",
             DEFAULT_INSERT_PROFILE_DESCRIPTION if profile_id == DEFAULT_INSERT_PROFILE_ID else "",

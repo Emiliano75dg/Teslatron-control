@@ -111,9 +111,7 @@ def write_contact_check_report(report: ContactCheckReport, output_csv: Path) -> 
 def build_characterization_report(records: list[MeasurementRecord]) -> CharacterizationReport:
     by_id = _mean_resistance_by_id(records)
     compliance_count = sum(
-        1
-        for record in records
-        if record.compliance_positive or record.compliance_negative
+        1 for record in records if record.compliance_positive or record.compliance_negative
     )
     flags: list[str] = []
     if compliance_count:
@@ -159,7 +157,9 @@ def build_characterization_report(records: list[MeasurementRecord]) -> Character
     )
 
 
-def write_characterization_report(report: CharacterizationReport, output_csv: Path) -> tuple[Path, Path]:
+def write_characterization_report(
+    report: CharacterizationReport, output_csv: Path
+) -> tuple[Path, Path]:
     stem = output_csv.with_suffix("")
     json_path = stem.with_name(f"{stem.name}_report.json")
     md_path = stem.with_name(f"{stem.name}_report.md")
@@ -183,9 +183,7 @@ def _summarize_pair(
     resistance_rsd = resistance_std / denominator if denominator else 0.0
     linearity = _linearity_error(records)
     compliance_count = sum(
-        1
-        for record in records
-        if record.compliance_positive or record.compliance_negative
+        1 for record in records if record.compliance_positive or record.compliance_negative
     )
 
     flags: list[str] = []
@@ -239,12 +237,8 @@ def _linearity_error(records: list[MeasurementRecord]) -> float:
 
 def _iv_fit(records: list[MeasurementRecord]) -> dict[str, float]:
     points = [
-        (record.current_measured_positive_A, record.voltage_positive_V)
-        for record in records
-    ] + [
-        (record.current_measured_negative_A, record.voltage_negative_V)
-        for record in records
-    ]
+        (record.current_measured_positive_A, record.voltage_positive_V) for record in records
+    ] + [(record.current_measured_negative_A, record.voltage_negative_V) for record in records]
     if len(points) < 2:
         return {"slope_ohm": 0.0, "intercept_V": 0.0, "r2": 0.0}
     xs = [point[0] for point in points]
@@ -270,7 +264,10 @@ def _format_contact_report_markdown(report: ContactCheckReport) -> str:
         f"Overall status: **{status}**",
         f"Total sweeps: {report.total_records}",
         "",
-        "| Pair | I-V points | Max |I| (A) | Slope (ohm) | Offset (V) | R2 | Compliance | Status | Flags |",
+        (
+            "| Pair | I-V points | Max |I| (A) | Slope (ohm) | Offset (V) | "
+            "R2 | Compliance | Status | Flags |"
+        ),
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     for summary in report.pair_summaries:

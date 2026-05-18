@@ -34,6 +34,7 @@ from .planner import MeasurementStep
 @dataclass(frozen=True)
 class MeasurementRecord:
     """A single measurement result with current, voltage, and instrument status."""
+
     sequence_name: str
     measurement_id: str
     mode: str
@@ -61,12 +62,13 @@ class MeasurementCancelled(RuntimeError):
 
 class ContactCheckRunner:
     """Execute contact-check measurements via relay routing and SCPI commands.
-    
+
     Manages the full measurement lifecycle:
     - prepare(): Configure instruments, open all relays
     - run(): Execute list of MeasurementSteps, write CSV
     - finish(): Turn off output, open all relays (cleanup)
     """
+
     def __init__(
         self,
         *,
@@ -80,7 +82,7 @@ class ContactCheckRunner:
         stop_requested: Callable[[], bool] | None = None,
     ) -> None:
         """Initialize runner with instruments and measurement parameters.
-        
+
         Args:
             b2902b: Keysight SMU for current source and voltage measurement.
             daq6510: Keithley DAQ with 7709 multiplexer for relay control.
@@ -101,12 +103,12 @@ class ContactCheckRunner:
 
     def prepare(self) -> None:
         """Initialize instruments for measurement.
-        
+
         - Queries B2902B and DAQ6510 identification
         - Sets DAQ to SCPI command language
         - Opens all relays to safe state
         - Configures B2902B as current source with compliance voltage
-        
+
         Call this once before running measurements.
         """
         self.daq6510.identify()
@@ -121,20 +123,20 @@ class ContactCheckRunner:
 
     def run(self, steps: Iterable[MeasurementStep], output_path: Path) -> list[MeasurementRecord]:
         """Execute measurement steps and write results to CSV.
-        
+
         For each MeasurementStep:
         1. Close relays to route current through force pair
         2. Set positive current, measure voltage
         3. Set negative current, measure voltage
         4. Extract odd-in-current resistance
         5. Accumulate MeasurementRecord to results
-        
+
         All relays opened in finally block for safe cleanup even on error.
-        
+
         Args:
             steps: Iterable of MeasurementStep objects defining measurements.
             output_path: Path to write CSV file with results.
-            
+
         Returns:
             List of MeasurementRecord objects (also written to CSV).
         """
@@ -160,19 +162,19 @@ class ContactCheckRunner:
 
     def run_step(self, step: MeasurementStep) -> MeasurementRecord:
         """Execute a single measurement step.
-        
+
         1. Close relays for current path (force pair) via multiplexer
         2. Apply positive current, measure voltage/current/status
         3. Apply negative current, measure voltage/current/status
         4. Extract odd-in-current resistance from measured values
         5. Return MeasurementRecord with all data and metadata
-        
+
         Args:
             step: MeasurementStep defining current pair, routing, and current value.
-            
+
         Returns:
             MeasurementRecord with measurement results and status.
-            
+
         Raises:
             ValueError: If step.current_a is not numeric.
         """
@@ -239,10 +241,10 @@ class ContactCheckRunner:
 
     def finish(self) -> None:
         """Clean up instruments to safe state.
-        
+
         - Turn off B2902B current source output
         - Open all relays in DAQ6510 multiplexer
-        
+
         Always called in finally block after run() for safe cleanup.
         """
         self.b2902b.set_current(0.0)
@@ -284,19 +286,19 @@ class B2902BReading:
 
 def parse_b2902b_fetch(response: str) -> B2902BReading:
     """Parse B2902B source/measure response into structured reading.
-    
+
     Response format: \"V,I,CH,STAT\" where:
     - V: voltage (float, volts)
     - I: current (float, amps)
     - CH: channel (int, usually 1 or 2)
     - STAT: status bits (int, bit 0 = compliance reached)
-    
+
     Args:
         response: Raw SCPI response string from a READ?/FETCH? query.
-        
+
     Returns:
         B2902BReading with voltage, current, status, and compliance flag.
-        
+
     Raises:
         ValueError: If response format is invalid or cannot be parsed.
     """

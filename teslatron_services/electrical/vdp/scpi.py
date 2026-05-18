@@ -17,7 +17,7 @@ Usage:
     transport.write("*RST")          # Reset instrument (retries on timeout)
     idn = transport.query("*IDN?")   # Get identifier
     transport.close()
-    
+
     # Simulation (no hardware needed)
     transport = DryRunTransport()
     transport.write(":SOUR:CURR 1e-5")  # Sets current (prints to stdout)
@@ -36,14 +36,11 @@ logger = logging.getLogger(__name__)
 
 
 class Transport(Protocol):
-    def write(self, command: str) -> None:
-        ...
+    def write(self, command: str) -> None: ...
 
-    def query(self, command: str) -> str:
-        ...
+    def query(self, command: str) -> str: ...
 
-    def close(self) -> None:
-        ...
+    def close(self) -> None: ...
 
 
 @dataclass
@@ -85,11 +82,11 @@ class DryRunTransport:
 
 class SocketTransport:
     """TCP socket transport for SCPI commands with retry logic and error handling.
-    
+
     Automatically retries on transient timeouts (up to max_retries times).
     Fails fast on connection refused, broken pipe, and other permanent errors.
     """
-    
+
     def __init__(
         self,
         host: str,
@@ -101,7 +98,7 @@ class SocketTransport:
         max_retries: int = 3,
     ) -> None:
         """Initialize SCPI socket transport.
-        
+
         Args:
             host: Instrument IP address.
             port: TCP port number (typically 5025 for SCPI).
@@ -117,16 +114,16 @@ class SocketTransport:
         self._read_buffer_bytes = read_buffer_bytes
         self._max_retries = max_retries
         self._socket = None
-        
+
         # Connect to instrument
         try:
             self._socket = socket.create_connection((host, port), timeout=timeout_s)
             self._socket.settimeout(timeout_s)
             logger.debug(f"Connected to {host}:{port}")
-        except ConnectionRefusedError as e:
+        except ConnectionRefusedError:
             logger.error(f"Connection refused to {host}:{port} - is instrument online?")
             raise
-        except socket.timeout as e:
+        except socket.timeout:
             logger.error(f"Socket timeout during connect to {host}:{port}")
             raise
         except OSError as e:
@@ -135,12 +132,12 @@ class SocketTransport:
 
     def write(self, command: str) -> None:
         """Send a SCPI command (no response expected).
-        
+
         Retries automatically on socket timeout; fails fast on connection errors.
-        
+
         Args:
             command: SCPI command string (e.g., "*RST", ":SOUR:VOLT 5.0").
-            
+
         Raises:
             ConnectionRefusedError: Instrument not accepting connections.
             BrokenPipeError: Connection closed by instrument mid-command.
@@ -152,7 +149,7 @@ class SocketTransport:
                 self._socket.sendall(command.encode("ascii") + self._termination)
                 logger.debug("SCPI write succeeded: %s", command)
                 return
-            except socket.timeout as e:
+            except socket.timeout:
                 if attempt <= self._max_retries:
                     wait_s = 2 ** (attempt - 1) * 0.1  # Exponential backoff: 0.1s, 0.2s, 0.4s
                     logger.warning(
@@ -161,13 +158,17 @@ class SocketTransport:
                     )
                     time.sleep(wait_s)
                 else:
-                    logger.error(f"Socket timeout on write (failed after {self._max_retries + 1} attempts)")
+                    logger.error(
+                        f"Socket timeout on write (failed after {self._max_retries + 1} attempts)"
+                    )
                     raise
-            except BrokenPipeError as e:
-                logger.error(f"BrokenPipeError on write - connection closed by instrument")
+            except BrokenPipeError:
+                logger.error("BrokenPipeError on write - connection closed by instrument")
                 raise
-            except ConnectionRefusedError as e:
-                logger.error(f"ConnectionRefusedError on write - instrument not accepting connections")
+            except ConnectionRefusedError:
+                logger.error(
+                    "ConnectionRefusedError on write - instrument not accepting connections"
+                )
                 raise
             except OSError as e:
                 logger.error(f"OSError on write: {e}")
@@ -175,16 +176,16 @@ class SocketTransport:
 
     def query(self, command: str) -> str:
         """Send a SCPI query and read response.
-        
+
         Retries automatically on socket timeout; fails fast on connection errors.
         Validates response is not empty before returning.
-        
+
         Args:
             command: SCPI query command (e.g., "*IDN?", ":MEAS:VOLT?").
-            
+
         Returns:
             Response string (stripped of whitespace and line terminators).
-            
+
         Raises:
             ConnectionRefused Error: Instrument not accepting connections.
             BrokenPipeError: Connection closed by instrument.
@@ -196,19 +197,23 @@ class SocketTransport:
             try:
                 # Send command
                 self._socket.sendall(command.encode("ascii") + self._termination)
-                
+
                 # Read response
-                response = self._socket.recv(self._read_buffer_bytes).decode("ascii", errors="replace").strip()
-                
+                response = (
+                    self._socket.recv(self._read_buffer_bytes)
+                    .decode("ascii", errors="replace")
+                    .strip()
+                )
+
                 # Validate non-empty
                 if not response:
                     logger.warning(f"Empty response to query: {command}")
                     raise ValueError(f"Empty response to query '{command}'")
-                
+
                 logger.debug("SCPI query succeeded: %s -> %s", command, response)
                 return response
-                
-            except socket.timeout as e:
+
+            except socket.timeout:
                 if attempt <= self._max_retries:
                     wait_s = 2 ** (attempt - 1) * 0.1  # Exponential backoff
                     logger.warning(
@@ -217,13 +222,17 @@ class SocketTransport:
                     )
                     time.sleep(wait_s)
                 else:
-                    logger.error(f"Socket timeout on query (failed after {self._max_retries + 1} attempts)")
+                    logger.error(
+                        f"Socket timeout on query (failed after {self._max_retries + 1} attempts)"
+                    )
                     raise
-            except BrokenPipeError as e:
-                logger.error(f"BrokenPipeError on query - connection closed by instrument")
+            except BrokenPipeError:
+                logger.error("BrokenPipeError on query - connection closed by instrument")
                 raise
-            except ConnectionRefusedError as e:
-                logger.error(f"ConnectionRefusedError on query - instrument not accepting connections")
+            except ConnectionRefusedError:
+                logger.error(
+                    "ConnectionRefusedError on query - instrument not accepting connections"
+                )
                 raise
             except OSError as e:
                 logger.error(f"OSError on query: {e}")

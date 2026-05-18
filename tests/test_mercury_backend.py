@@ -12,8 +12,7 @@ from teslatron_services.cryostat.backends import (
     _pressure_mode_from_loop_state,
     _within_tolerance,
 )
-from teslatron_services.cryostat.config import CryostatServiceConfig
-from teslatron_services.cryostat.config import MercurySensorSetupConfig
+from teslatron_services.cryostat.config import CryostatServiceConfig, MercurySensorSetupConfig
 
 
 class FakeResource:

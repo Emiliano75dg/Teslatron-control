@@ -1,2 +1,1 @@
 """Cryostat service package."""
-

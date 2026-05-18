@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-from dataclasses import dataclass, field
+import json
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
-import json
 
 
 @dataclass(slots=True)
@@ -122,9 +121,7 @@ def load_config(path: str | Path | None = None) -> ElectricalServiceConfig:
         try:
             import yaml
         except ImportError as exc:
-            raise RuntimeError(
-                "YAML config requires PyYAML. Use JSON or install pyyaml."
-            ) from exc
+            raise RuntimeError("YAML config requires PyYAML. Use JSON or install pyyaml.") from exc
         data = yaml.safe_load(raw) or {}
     else:
         data = json.loads(raw)

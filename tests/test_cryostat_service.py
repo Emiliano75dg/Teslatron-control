@@ -5,17 +5,22 @@ import unittest
 from pathlib import Path
 
 import httpx
+
 from teslatron_services.cryostat.api import create_app
-from teslatron_services.cryostat.config import CryostatServiceConfig
-from teslatron_services.cryostat.config import InsertCapabilitiesConfig
-from teslatron_services.cryostat.config import InsertProfileConfig
-from teslatron_services.cryostat.config import MercurySensorSetupConfig
-from teslatron_services.cryostat.config import config_from_mapping
+from teslatron_services.cryostat.config import (
+    CryostatServiceConfig,
+    InsertCapabilitiesConfig,
+    InsertProfileConfig,
+    MercurySensorSetupConfig,
+    config_from_mapping,
+)
 from teslatron_services.cryostat.service import CryostatService
-from teslatron_services.cryostat.state import FieldState
-from teslatron_services.cryostat.state import TemperatureLoopState
-from teslatron_services.cryostat.state import TemperatureState
-from teslatron_services.cryostat.state import CryostatState
+from teslatron_services.cryostat.state import (
+    CryostatState,
+    FieldState,
+    TemperatureLoopState,
+    TemperatureState,
+)
 
 
 class FakeBackend:
@@ -109,8 +114,31 @@ class SlowBackend(FakeBackend):
             self.active_operations -= 1
 
 
+class CountingBackend(FakeBackend):
+    def __init__(self):
+        super().__init__()
+        self.read_state_calls = 0
+
+    def read_state(self) -> CryostatState:
+        self.read_state_calls += 1
+        return super().read_state()
+
+
+class MissingValueBackend(FakeBackend):
+    def read_state(self) -> CryostatState:
+        return CryostatState(
+            temperature=TemperatureState(
+                sample=TemperatureLoopState(temperature_K=None, target_K=None, stable=False),
+                vti=TemperatureLoopState(temperature_K=None, target_K=None, stable=False),
+            ),
+            field=FieldState(B_T=None, target_T=None, at_setpoint=None, stable=False),
+        )
+
+
 class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
-    def make_service(self, *, capabilities: InsertCapabilitiesConfig | None = None) -> CryostatService:
+    def make_service(
+        self, *, capabilities: InsertCapabilitiesConfig | None = None
+    ) -> CryostatService:
         config = CryostatServiceConfig(
             insert_profiles={
                 "limited": InsertProfileConfig(
@@ -134,9 +162,7 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
         return CryostatService(config, backend=FakeBackend())
 
     async def test_field_command_blocked_by_insert_capability(self) -> None:
-        service = self.make_service(
-            capabilities=InsertCapabilitiesConfig(field_control=False)
-        )
+        service = self.make_service(capabilities=InsertCapabilitiesConfig(field_control=False))
 
         with self.assertRaises(PermissionError):
             await service.ramp_field(1.0, 0.1)
@@ -172,9 +198,7 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_vti_loop_blocked_for_both_temperature_command(self) -> None:
-        service = self.make_service(
-            capabilities=InsertCapabilitiesConfig(vti_loop=False)
-        )
+        service = self.make_service(capabilities=InsertCapabilitiesConfig(vti_loop=False))
 
         with self.assertRaises(PermissionError):
             await service.ramp_temperature(4.2, 0.5, loop="both")
@@ -200,6 +224,7 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(ValueError):
             await service.apply_sample_sensor("other")
+
     async def test_recipe_runs_steps_in_order(self) -> None:
         service = self.make_service()
 
@@ -269,6 +294,193 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(service.recipe_status()["status"], "completed")
         self.assertEqual(service.backend.calls, [("ramp_field", 0.0, 0.1)])
+
+    async def test_external_measurement_point_waits_for_completion_signal(self) -> None:
+        service = self.make_service()
+
+        await service.start_recipe(
+            {
+                "name": "point measurement",
+                "steps": [
+                    {
+                        "type": "external_measurement",
+                        "mode": "point",
+                        "request_signal": "measure_iv",
+                        "completion_signal": "measure_iv.completed",
+                        "failure_signal": "measure_iv.failed",
+                        "timeout_s": 5,
+                        "message": "Run IV measurement in LabVIEW",
+                    },
+                    {
+                        "type": "ramp_field",
+                        "target_T": 0.0,
+                        "rate_T_per_min": 0.1,
+                    },
+                ],
+            }
+        )
+
+        for _ in range(20):
+            if service.recipe_status()["status"] == "waiting_external_measurement":
+                break
+            await asyncio.sleep(0.01)
+
+        status = service.recipe_status()
+        self.assertEqual(status["status"], "waiting_external_measurement")
+        self.assertEqual(status["external_measurement"]["request_signal"], "measure_iv")
+        self.assertEqual(service.backend.calls, [])
+
+        await service.signal_recipe("measure_iv.completed", "IV finished")
+        await service._recipe_task
+
+        self.assertEqual(service.recipe_status()["status"], "completed")
+        self.assertEqual(service.backend.calls, [("ramp_field", 0.0, 0.1)])
+
+    async def test_external_measurement_start_waits_for_started_then_advances_to_ramp(self) -> None:
+        service = self.make_service()
+        ramp_wait = asyncio.Event()
+        release_ramp = asyncio.Event()
+        original_wait_for_temperature_step = service._wait_for_temperature_step
+
+        async def blocking_wait_for_temperature_step(step: dict) -> None:
+            ramp_wait.set()
+            await release_ramp.wait()
+            await original_wait_for_temperature_step(step)
+
+        service._wait_for_temperature_step = blocking_wait_for_temperature_step
+
+        await service.start_recipe(
+            {
+                "name": "continuous measurement start",
+                "steps": [
+                    {
+                        "type": "external_measurement",
+                        "mode": "start",
+                        "request_signal": "R_vs_T.start",
+                        "completion_signal": "R_vs_T.started",
+                        "failure_signal": "R_vs_T.failed",
+                        "timeout_s": 5,
+                        "message": "Start LabVIEW continuous acquisition",
+                    },
+                    {
+                        "type": "ramp_temperature",
+                        "loop": "sample",
+                        "target_K": 295.0,
+                        "rate_K_per_min": 0.5,
+                        "stable_s": 0,
+                    },
+                ],
+            }
+        )
+
+        for _ in range(20):
+            if service.recipe_status()["status"] == "waiting_external_measurement":
+                break
+            await asyncio.sleep(0.01)
+
+        self.assertEqual(service.backend.calls, [])
+
+        await service.signal_recipe("R_vs_T.started", "Continuous acquisition started")
+        await asyncio.wait_for(ramp_wait.wait(), timeout=1)
+
+        self.assertEqual(service.backend.calls, [("ramp_temperature", 295.0, 0.5, "sample")])
+        self.assertEqual(service.recipe_status()["current_step"]["type"], "ramp_temperature")
+
+        release_ramp.set()
+        await service._recipe_task
+        self.assertEqual(service.recipe_status()["status"], "completed")
+
+    async def test_external_measurement_stop_waits_for_stopped_signal(self) -> None:
+        service = self.make_service()
+
+        await service.start_recipe(
+            {
+                "name": "continuous measurement stop",
+                "steps": [
+                    {
+                        "type": "external_measurement",
+                        "mode": "stop",
+                        "request_signal": "R_vs_T.stop",
+                        "completion_signal": "R_vs_T.stopped",
+                        "failure_signal": "R_vs_T.failed",
+                        "timeout_s": 5,
+                        "message": "Stop LabVIEW continuous acquisition",
+                    },
+                    {"type": "wait", "duration_s": 0.01},
+                ],
+            }
+        )
+
+        for _ in range(20):
+            if service.recipe_status()["status"] == "waiting_external_measurement":
+                break
+            await asyncio.sleep(0.01)
+
+        self.assertEqual(service.recipe_status()["external_measurement"]["mode"], "stop")
+
+        await service.signal_recipe("R_vs_T.stopped", "Continuous acquisition stopped")
+        await service._recipe_task
+
+        self.assertEqual(service.recipe_status()["status"], "completed")
+
+    async def test_external_measurement_failure_signal_moves_recipe_to_error(self) -> None:
+        service = self.make_service()
+
+        await service.start_recipe(
+            {
+                "name": "external failure",
+                "steps": [
+                    {
+                        "type": "external_measurement",
+                        "mode": "point",
+                        "request_signal": "measure_iv",
+                        "completion_signal": "measure_iv.completed",
+                        "failure_signal": "measure_iv.failed",
+                        "timeout_s": 5,
+                        "message": "Run IV measurement in LabVIEW",
+                    }
+                ],
+            }
+        )
+
+        for _ in range(20):
+            if service.recipe_status()["status"] == "waiting_external_measurement":
+                break
+            await asyncio.sleep(0.01)
+
+        await service.signal_recipe("measure_iv.failed", "Keithley compliance tripped")
+        await service._recipe_task
+
+        self.assertEqual(service.recipe_status()["status"], "error")
+        self.assertIn("Keithley compliance tripped", service.recipe_status()["message"])
+
+    async def test_external_measurement_timeout_moves_recipe_to_error(self) -> None:
+        service = self.make_service()
+
+        await service.start_recipe(
+            {
+                "name": "external timeout",
+                "steps": [
+                    {
+                        "type": "external_measurement",
+                        "mode": "point",
+                        "request_signal": "measure_iv",
+                        "completion_signal": "measure_iv.completed",
+                        "failure_signal": "measure_iv.failed",
+                        "timeout_s": 0.05,
+                        "message": "Run IV measurement in LabVIEW",
+                    }
+                ],
+            }
+        )
+
+        await service._recipe_task
+
+        self.assertEqual(service.recipe_status()["status"], "error")
+        self.assertIn(
+            "Timed out waiting for external measurement measure_iv",
+            service.recipe_status()["message"],
+        )
 
     async def test_recipe_rejects_second_active_recipe(self) -> None:
         service = self.make_service()
@@ -359,7 +571,9 @@ class CryostatApiTests(unittest.IsolatedAsyncioTestCase):
 
     def test_create_app_loads_repo_config_by_default(self) -> None:
         app = create_app()
-        endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/config")
+        endpoint = next(
+            route.endpoint for route in app.routes if getattr(route, "path", None) == "/config"
+        )
         payload = asyncio.run(endpoint())
         self.assertEqual(payload["backend"], "mercury")
         self.assertTrue(payload["read_only"])
@@ -373,7 +587,9 @@ class CryostatApiTests(unittest.IsolatedAsyncioTestCase):
             )
             app = self._app_for_service(service)
             transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
                 save_response = await client.post(
                     "/recipes/save",
                     json={"name": "api recipe", "steps": [{"type": "wait", "duration_s": 0.01}]},
@@ -390,6 +606,179 @@ class CryostatApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(recipes.status_code, 200)
                 self.assertEqual(recipes.json()["recipes"][0]["name"], "api recipe")
 
+    async def test_measurement_context_returns_cached_values_without_hardware_poll(self) -> None:
+        backend = CountingBackend()
+        service = CryostatService(CryostatServiceConfig(backend="mock"), backend=backend)
+        app = self._app_for_service(service)
+        transport = httpx.ASGITransport(app=app)
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/measurement-context")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["sample_temperature_K"],
+            295.0,
+        )
+        self.assertEqual(response.json()["field_T"], 0.0)
+        self.assertTrue(response.json()["safe_to_measure"])
+        self.assertEqual(backend.read_state_calls, 1)
+
+    async def test_measurement_context_returns_null_for_missing_values(self) -> None:
+        service = CryostatService(
+            CryostatServiceConfig(backend="mock"), backend=MissingValueBackend()
+        )
+        app = self._app_for_service(service)
+        transport = httpx.ASGITransport(app=app)
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get("/measurement-context")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["sample_temperature_K"])
+        self.assertIsNone(response.json()["field_T"])
+        self.assertTrue(response.json()["safe_to_measure"])
+
+    async def test_external_measurement_pending_and_complete_endpoints(self) -> None:
+        service = CryostatService(CryostatServiceConfig(backend="mock"), backend=FakeBackend())
+        app = self._app_for_service(service)
+        transport = httpx.ASGITransport(app=app)
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            await client.post(
+                "/recipes/start",
+                json={
+                    "name": "external api",
+                    "steps": [
+                        {
+                            "type": "external_measurement",
+                            "mode": "point",
+                            "request_signal": "measure_iv",
+                            "completion_signal": "measure_iv.completed",
+                            "failure_signal": "measure_iv.failed",
+                            "timeout_s": 5,
+                            "message": "Run IV measurement in LabVIEW",
+                        },
+                        {"type": "wait", "duration_s": 0.01},
+                    ],
+                },
+            )
+
+            for _ in range(20):
+                pending = await client.get("/external-measurements/pending")
+                if pending.json()["pending"]:
+                    break
+                await asyncio.sleep(0.01)
+
+            pending_payload = pending.json()
+            self.assertTrue(pending_payload["pending"])
+            self.assertEqual(pending_payload["mode"], "point")
+            self.assertEqual(pending_payload["request_signal"], "measure_iv")
+            self.assertEqual(pending_payload["sample_temperature_K"], 295.0)
+            self.assertEqual(pending_payload["field_T"], 0.0)
+            self.assertTrue(pending_payload["safe_to_measure"])
+
+            complete = await client.post(
+                "/external-measurements/complete",
+                json={
+                    "request_signal": "measure_iv",
+                    "status": "completed",
+                    "message": "Saved data",
+                    "metadata": {
+                        "file_path": "/tmp/iv.csv",
+                        "points": 123,
+                        "instrument": "LabVIEW",
+                    },
+                },
+            )
+
+            self.assertEqual(complete.status_code, 200)
+            await service._recipe_task
+
+        self.assertEqual(service.recipe_status()["status"], "completed")
+        self.assertEqual(service.recipe_status()["last_signal"]["signal"], "measure_iv.completed")
+        self.assertEqual(service.recipe_status()["last_signal"]["metadata"]["points"], 123)
+
+    async def test_measurement_context_polling_during_ramp_does_not_change_recipe_state(
+        self,
+    ) -> None:
+        service = CryostatService(CryostatServiceConfig(backend="mock"), backend=FakeBackend())
+        ramp_wait = asyncio.Event()
+        release_ramp = asyncio.Event()
+        original_wait_for_temperature_step = service._wait_for_temperature_step
+
+        async def blocking_wait_for_temperature_step(step: dict) -> None:
+            ramp_wait.set()
+            await release_ramp.wait()
+            await original_wait_for_temperature_step(step)
+
+        service._wait_for_temperature_step = blocking_wait_for_temperature_step
+        app = self._app_for_service(service)
+        transport = httpx.ASGITransport(app=app)
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            await client.post(
+                "/recipes/start",
+                json={
+                    "name": "ramp polling",
+                    "steps": [
+                        {
+                            "type": "external_measurement",
+                            "mode": "start",
+                            "request_signal": "R_vs_T.start",
+                            "completion_signal": "R_vs_T.started",
+                            "failure_signal": "R_vs_T.failed",
+                            "timeout_s": 5,
+                            "message": "Start LabVIEW continuous acquisition",
+                        },
+                        {
+                            "type": "ramp_temperature",
+                            "loop": "sample",
+                            "target_K": 295.0,
+                            "rate_K_per_min": 0.5,
+                            "stable_s": 0,
+                        },
+                    ],
+                },
+            )
+            await client.post(
+                "/recipes/signal",
+                json={"signal": "R_vs_T.started", "message": "Started"},
+            )
+            await asyncio.wait_for(ramp_wait.wait(), timeout=1)
+
+            before = service.recipe_status()["current_step_index"]
+            for _ in range(3):
+                response = await client.get("/measurement-context")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(service.recipe_status()["current_step_index"], before)
+                self.assertEqual(
+                    service.recipe_status()["current_step"]["type"], "ramp_temperature"
+                )
+
+        release_ramp.set()
+        await service._recipe_task
+
+    async def test_recipe_signal_endpoint_persists_metadata_in_last_signal(self) -> None:
+        service = CryostatService(CryostatServiceConfig(backend="mock"), backend=FakeBackend())
+        app = self._app_for_service(service)
+        transport = httpx.ASGITransport(app=app)
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/recipes/signal",
+                json={
+                    "signal": "measure_iv.completed",
+                    "message": "Completed",
+                    "metadata": {"file_path": "/tmp/iv.csv", "instrument": "LabVIEW"},
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            service.recipe_status()["last_signal"]["metadata"]["instrument"], "LabVIEW"
+        )
+
     async def test_recipes_save_returns_403_in_read_only_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             service = CryostatService(
@@ -398,7 +787,9 @@ class CryostatApiTests(unittest.IsolatedAsyncioTestCase):
             )
             app = self._app_for_service(service)
             transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
                 response = await client.post(
                     "/recipes/save",
                     json={"name": "blocked", "steps": [{"type": "wait", "duration_s": 0.01}]},
@@ -415,9 +806,13 @@ class CryostatApiTests(unittest.IsolatedAsyncioTestCase):
             )
             app = self._app_for_service(service)
             transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
                 payload = {"name": "duplicate", "steps": [{"type": "wait", "duration_s": 0.01}]}
-                self.assertEqual((await client.post("/recipes/save", json=payload)).status_code, 200)
+                self.assertEqual(
+                    (await client.post("/recipes/save", json=payload)).status_code, 200
+                )
                 response = await client.post("/recipes/save", json=payload)
 
             self.assertEqual(response.status_code, 400)
@@ -453,7 +848,9 @@ class CryostatApiTests(unittest.IsolatedAsyncioTestCase):
     def test_shutdown_route_is_disabled_by_default(self) -> None:
         app = create_app(config=CryostatServiceConfig())
 
-        shutdown_routes = [route for route in app.routes if getattr(route, "path", None) == "/shutdown"]
+        shutdown_routes = [
+            route for route in app.routes if getattr(route, "path", None) == "/shutdown"
+        ]
 
         self.assertEqual(shutdown_routes, [])
 
@@ -468,7 +865,9 @@ class CryostatApiTests(unittest.IsolatedAsyncioTestCase):
             shutdown_callback=shutdown_callback,
         )
 
-        endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/shutdown")
+        endpoint = next(
+            route.endpoint for route in app.routes if getattr(route, "path", None) == "/shutdown"
+        )
         payload = asyncio.run(endpoint())
 
         self.assertEqual(payload, {"status": "shutting_down"})
@@ -494,11 +893,7 @@ class CryostatConfigTests(unittest.TestCase):
                 ),
                 "b": InsertProfileConfig(
                     sample_thermometer="thermo B",
-                    itc=config_from_mapping({
-                        "cryostat": {
-                            "itc": {"probe_signal": "DB7.T1"}
-                        }
-                    }).itc,
+                    itc=config_from_mapping({"cryostat": {"itc": {"probe_signal": "DB7.T1"}}}).itc,
                 ),
             },
         )
@@ -519,11 +914,7 @@ class CryostatConfigTests(unittest.TestCase):
             {
                 "cryostat": {
                     "active_insert": "no_field",
-                    "insert_profiles": {
-                        "no_field": {
-                            "capabilities": {"field_control": False}
-                        }
-                    },
+                    "insert_profiles": {"no_field": {"capabilities": {"field_control": False}}},
                 }
             }
         )
@@ -533,15 +924,7 @@ class CryostatConfigTests(unittest.TestCase):
     def test_insert_profile_with_ips_override_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "cannot override IPS settings"):
             config_from_mapping(
-                {
-                    "cryostat": {
-                        "insert_profiles": {
-                            "bad": {
-                                "ips": {"magnet_group": "GRPX"}
-                            }
-                        }
-                    }
-                }
+                {"cryostat": {"insert_profiles": {"bad": {"ips": {"magnet_group": "GRPX"}}}}}
             )
 
     def test_profile_without_sensor_whitelist_has_no_available_presets(self) -> None:
@@ -616,7 +999,9 @@ class CryostatConfigTests(unittest.TestCase):
             )
 
     def test_safety_temperature_range_must_be_coherent(self) -> None:
-        with self.assertRaisesRegex(ValueError, "min_temperature_K cannot exceed max_temperature_K"):
+        with self.assertRaisesRegex(
+            ValueError, "min_temperature_K cannot exceed max_temperature_K"
+        ):
             config_from_mapping(
                 {
                     "cryostat": {

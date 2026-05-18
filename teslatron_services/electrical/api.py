@@ -8,8 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .config import ElectricalServiceConfig
-from .config import load_config
+from .config import ElectricalServiceConfig, load_config
 from .orchestrator import ElectricalMeasurementService
 
 
@@ -39,7 +38,8 @@ def _model_payload(model: BaseModel) -> dict:
 
 def create_app(
     config: ElectricalServiceConfig | None = None,
-    service_factory: Callable[[ElectricalServiceConfig], ElectricalMeasurementService] | None = None,
+    service_factory: Callable[[ElectricalServiceConfig], ElectricalMeasurementService]
+    | None = None,
 ) -> FastAPI:
     service_config = config or load_config(_default_config_path())
 
