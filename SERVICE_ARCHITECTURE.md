@@ -54,11 +54,16 @@ opening iTC/iPS directly.
 The current implementation has three cryostat backends:
 
 - `mock`: simulates the cryostat without hardware
-- `mercury`: opens the configured iTC/iPS VISA resources and sends Mercury
-  commands based on the current service configuration
+- `standard`: implements the standard cryostat configuration, opening the
+  configured iTC/iPS VISA resources and sending Mercury commands
 - `heliox`: uses the abstract `HelioxX:HEL` interface for sample control while
   keeping VTI/gas access on the Mercury iTC side and field control on the
   system-global Mercury iPS
+
+From the operator point of view, the real alternatives are:
+
+- `standard`: Fisher probe or Basic probe
+- `heliox`: Heliox probe only
 
 The same backend can be run in two operating modes:
 
@@ -198,13 +203,13 @@ curl -X POST http://127.0.0.1:8766/commands/ips/switch-heater \
 
 ## Next step
 
-The `mercury` backend intentionally preserves the working Mercury command
+The `standard` backend intentionally preserves the working Mercury command
 semantics of the instrument. To use it, set:
 
 ```json
 {
   "cryostat": {
-    "backend": "mercury",
+    "backend": "standard",
     "read_only": true
   }
 }
@@ -321,9 +326,9 @@ config/cryostat_tcpip_candidates.json
 
 ## Heliox backend
 
-Besides the standard Mercury backend, the service also supports a dedicated `heliox`
-backend for controllers that expose the abstract `HelioxX:HEL` device described in the
-Heliox manual.
+Besides the `standard` configuration, the service also supports a dedicated
+`heliox` backend for controllers that expose
+the abstract `HelioxX:HEL` device described in the Heliox manual.
 
 Example configs:
 
@@ -367,7 +372,7 @@ attempting to override `ips` is rejected explicitly in
 
 ### Functional matrix
 
-| Function | Fisher / Mercury today | Expected for Heliox | Scope |
+| Function | Standard config today | Expected for Heliox | Scope |
 | --- | --- | --- | --- |
 | Sample temperature readback | Raw Mercury `probe_signal` / `probe_loop` | Yes, possibly via `HelioxX:HEL` or sample-specific Mercury channels | Insert-specific |
 | Sample setpoint / ramp / hold | Yes | Yes | Insert-specific |
@@ -392,12 +397,12 @@ This suggests a better reuse strategy than a fully separate "Heliox-only" contro
 5. Continue to use ordinary Mercury device commands where the function is system-global and
    should not depend on the insert identity.
 
-### Sample temperature control: Fisher vs Heliox
+### Sample temperature control: standard vs Heliox
 
 The most important behavioural difference is how sample temperature control is expressed at the
 software boundary.
 
-| Aspect | Fisher / Mercury | Heliox |
+| Aspect | Standard config | Heliox |
 | --- | --- | --- |
 | User-facing controlled variable | Sample temperature | `He3` pot / sample temperature |
 | Readback path | Raw Mercury `probe_signal` / `probe_loop` | Abstract `HelioxX:HEL:SIG:TEMP` |

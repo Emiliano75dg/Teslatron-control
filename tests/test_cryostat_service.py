@@ -575,9 +575,13 @@ class CryostatApiTests(unittest.IsolatedAsyncioTestCase):
             route.endpoint for route in app.routes if getattr(route, "path", None) == "/config"
         )
         payload = asyncio.run(endpoint())
-        self.assertEqual(payload["backend"], "mercury")
+        self.assertEqual(payload["backend"], "standard")
         self.assertTrue(payload["read_only"])
         self.assertEqual(payload["active_insert"], "fisher_probe")
+
+    def test_config_from_mapping_accepts_legacy_mercury_backend_alias(self) -> None:
+        config = config_from_mapping({"cryostat": {"backend": "mercury"}})
+        self.assertEqual(config.backend, "standard")
 
     async def test_health_state_and_recipes_endpoints(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

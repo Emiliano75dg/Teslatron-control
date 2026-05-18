@@ -1015,7 +1015,7 @@ class CryostatService:
         self._state = self._read_state_safely()
 
     async def _run_blocking(self, operation: Callable[[], Any]) -> Any:
-        if self.config.backend in {"mercury", "heliox"}:
+        if self.config.backend in {"standard", "heliox"}:
             return await asyncio.to_thread(operation)
         return operation()
 

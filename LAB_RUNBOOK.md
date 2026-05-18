@@ -129,9 +129,15 @@ config/heliox_local_gui.example.json
 
 - Heliox requires a dedicated service started with `backend: "heliox"` in the
   selected config file.
-- Changing insert profile through the standard Mercury service does not switch
-  the backend to Heliox; it only updates the active insert/profile mapping
-  within the current backend.
+- The standard configuration and the Heliox configuration are separate service
+  modes.
+- Changing insert profile inside the standard service does not switch the
+  backend to Heliox; it only updates the active insert/profile mapping within
+  the standard configuration.
+- In practice, the standard configuration is for Fisher probe or Basic probe,
+  while the Heliox configuration is for the Heliox probe only.
+- Legacy configs that still say `backend: "mercury"` are accepted and treated
+  as `backend: "standard"`.
 - The Heliox backend controls the sample through the abstract device `HelioxX:HEL`.
 - VTI loop and gas control are still expected to come from the underlying Mercury iTC mapping.
 - Field control is still expected to come from the system-global Mercury iPS.
