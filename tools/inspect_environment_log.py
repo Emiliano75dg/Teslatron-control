@@ -1,5 +1,6 @@
 import argparse
 import os
+from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -35,6 +36,7 @@ TEXT_MUTED = "#5f748c"
 BUTTON_BG = "#d9e8f5"
 BUTTON_HOVER = "#c5dbef"
 ACCENT = "#2a6f97"
+LOCAL_TIMEZONE = datetime.now().astimezone().tzinfo
 
 
 def apply_plot_theme():
@@ -66,18 +68,29 @@ def style_axis_panel(ax):
     for spine in ax.spines.values():
         spine.set_color(PANEL_EDGE)
         spine.set_linewidth(1.1)
-    ax.tick_params(colors=TEXT_MUTED, labelsize=9.5)
+    ax.tick_params(colors=TEXT_MUTED, labelsize=8.8, pad=4)
     ax.title.set_fontsize(13)
     ax.title.set_weight('bold')
     ax.grid(True, which='major', linewidth=0.8)
+
+
+def autoscale_visible_lines(*axes):
+    """Autoscale each axes based only on currently visible lines."""
+    for ax in axes:
+        try:
+            ax.relim(visible_only=True)
+        except TypeError:
+            ax.relim()
+        if any(line.get_visible() for line in ax.lines):
+            ax.autoscale_view()
 
 
 def add_panel_glow(fig, ax):
     """Draw a rounded panel behind an axes for separation."""
     pos = ax.get_position()
     panel = FancyBboxPatch(
-        (pos.x0 - 0.006, pos.y0 - 0.014),
-        pos.width + 0.012,
+        (pos.x0 - 0.010, pos.y0 - 0.014),
+        pos.width + 0.020,
         pos.height + 0.028,
         boxstyle="round,pad=0.01,rounding_size=0.02",
         transform=fig.transFigure,
@@ -96,26 +109,80 @@ def add_overview_header(fig, file_path, df, time_col):
     end_ts = df[time_col].max()
     duration = end_ts - start_ts
     minutes = int(duration.total_seconds() // 60) if pd.notna(duration) else 0
+    timezone_label = getattr(LOCAL_TIMEZONE, "tzname", lambda _dt: str(LOCAL_TIMEZONE))(None)
 
-    fig.text(0.055, 0.972, "Cryostat Environment Log",
-             fontsize=18, fontweight='bold', color=TEXT_PRIMARY,
-             ha='left', va='top')
-    fig.text(0.055, 0.943, os.path.basename(file_path),
-             fontsize=10.5, color=ACCENT,
+    fig.text(0.055, 0.968, "Cryostat Environment Log",
+             fontsize=16.0, fontweight='bold', color=TEXT_PRIMARY,
              ha='left', va='top')
     fig.text(
-        0.055, 0.921,
-        f"{len(df):,} samples   |   {start_ts:%Y-%m-%d %H:%M:%S} -> {end_ts:%Y-%m-%d %H:%M:%S}   |   {minutes} min",
-        fontsize=9.5,
+        0.055, 0.946,
+        os.path.basename(file_path),
+        fontsize=9.6,
+        color=ACCENT,
+        ha='left',
+        va='top',
+    )
+    fig.text(
+        0.39, 0.968,
+        f"Samples: {len(df):,}",
+        fontsize=9.0,
+        color=TEXT_MUTED,
+        ha='left',
+        va='top',
+    )
+    fig.text(
+        0.52, 0.968,
+        f"Window: {minutes} min",
+        fontsize=9.0,
+        color=TEXT_MUTED,
+        ha='left',
+        va='top',
+    )
+    fig.text(
+        0.66, 0.968,
+        f"TZ: {timezone_label}",
+        fontsize=9.0,
+        color=TEXT_MUTED,
+        ha='left',
+        va='top',
+    )
+    fig.text(
+        0.39, 0.946,
+        f"From: {start_ts:%Y-%m-%d %H:%M}",
+        fontsize=9.0,
+        color=TEXT_MUTED,
+        ha='left',
+        va='top',
+    )
+    fig.text(
+        0.66, 0.946,
+        f"To: {end_ts:%Y-%m-%d %H:%M}",
+        fontsize=9.0,
         color=TEXT_MUTED,
         ha='left',
         va='top',
     )
 
 
+def normalize_time_data(series):
+    """
+    Normalize timestamps to the local machine timezone for plotting.
+    Logs are written in UTC, so we convert explicitly for display.
+    """
+    if pd.api.types.is_numeric_dtype(series):
+        parsed = pd.to_datetime(series, unit='s', utc=True)
+    else:
+        parsed = pd.to_datetime(series)
+        if getattr(parsed.dt, 'tz', None) is None:
+            parsed = parsed.dt.tz_localize('UTC')
+        else:
+            parsed = parsed.dt.tz_convert('UTC')
+    return parsed.dt.tz_convert(LOCAL_TIMEZONE)
+
+
 def add_header_button(fig, on_click, label='Load New File'):
     """Place the main action button in the top-right header area."""
-    ax_button = fig.add_axes([0.82, 0.925, 0.14, 0.042])
+    ax_button = fig.add_axes([0.84, 0.943, 0.12, 0.034])
     button = Button(ax_button, label)
     button.on_clicked(on_click)
     style_button(ax_button, button)
@@ -156,9 +223,9 @@ def style_checkbuttons(check_buttons, all_series):
     for label in check_buttons.labels:
         label_text = label.get_text()
         label.set_color(TEXT_PRIMARY)
-        label.set_fontsize(9.0)
+        label.set_fontsize(8.2)
         label.set_horizontalalignment('left')
-        label.set_x(0.36)
+        label.set_x(0.31)
         for props in all_series.values():
             if props['label'] == label_text:
                 label.set_color(props['color'])
@@ -199,8 +266,8 @@ def inspect_log(file_path: str):
                 transform=ax.transAxes, color=TEXT_PRIMARY, fontsize=16, fontweight='bold')
         ax.set_xticks([])
         ax.set_yticks([])
-        fig.text(0.055, 0.955, "Cryostat Environment Log", fontsize=18, fontweight='bold', color=TEXT_PRIMARY)
-        fig.text(0.055, 0.928, os.path.basename(file_path), fontsize=10.5, color=ACCENT)
+        fig.text(0.055, 0.965, "Cryostat Environment Log", fontsize=16.5, fontweight='bold', color=TEXT_PRIMARY)
+        fig.text(0.25, 0.965, os.path.basename(file_path), fontsize=10.0, color=ACCENT)
         add_panel_glow(fig, ax)
 
         # --- Button to load new file ---
@@ -222,11 +289,7 @@ def inspect_log(file_path: str):
     
     if time_col:
         try:
-            # If it's a unix timestamp, convert it
-            if pd.api.types.is_numeric_dtype(df[time_col]):
-                 df[time_col] = pd.to_datetime(df[time_col], unit='s')
-            else:
-                 df[time_col] = pd.to_datetime(df[time_col])
+            df[time_col] = normalize_time_data(df[time_col])
         except Exception as e:
             print(f"Error converting timestamp column '{time_col}': {e}")
             return
@@ -238,13 +301,14 @@ def inspect_log(file_path: str):
     apply_plot_theme()
     fig, (ax1, ax2) = plt.subplots(
         2, 1, figsize=(15.5, 9.8), sharex=True,
-        gridspec_kw={'height_ratios': [1, 1], 'hspace': 0.16},
+        gridspec_kw={'height_ratios': [1, 1], 'hspace': 0.18},
     )
     fig.patch.set_facecolor(FIGURE_BG)
 
     # --- Plot 1: Temperatures ---
     ax1.set_title('Temperatures')
     ax1.set_ylabel('Temperature (K)')
+    ax1.yaxis.labelpad = 8
     style_axis_panel(ax1)
 
     lines_by_label_ax1 = {}
@@ -264,7 +328,8 @@ def inspect_log(file_path: str):
 
     # --- Plot 2: Magnetics & Pressure (with dual Y-axis) ---
     ax2.set_title('Magnetics & Pressure')
-    ax2.set_ylabel('Field (T), Current (A), Voltage (V)')
+    ax2.set_ylabel('Field / Current / Voltage')
+    ax2.yaxis.labelpad = 8
     style_axis_panel(ax2)
     
     lines_by_label_ax2 = {}
@@ -282,11 +347,12 @@ def inspect_log(file_path: str):
             lines_by_label_ax2[props['label']] = line
             labels_ax2.append(props['label'])
 
-    ax2.tick_params(axis='y', colors=TEXT_MUTED)
+    ax2.tick_params(axis='y', colors=TEXT_MUTED, labelsize=8.6, pad=3)
 
     # Create a second Y-axis for pressure and needle valve
     ax3 = ax2.twinx()
-    ax3.set_ylabel('Pressure (mbar), Needle (%)')
+    ax3.set_ylabel('Pressure / Needle')
+    ax3.yaxis.labelpad = 8
     ax3.set_facecolor('none')
     for spine in ax3.spines.values():
         spine.set_color(PANEL_EDGE)
@@ -306,17 +372,22 @@ def inspect_log(file_path: str):
             lines_by_label_ax2[props['label']] = line
             labels_ax2.append(props['label'])
     
-    ax3.tick_params(axis='y', colors=TEXT_MUTED)
+    ax3.tick_params(axis='y', colors=TEXT_MUTED, labelsize=8.6, pad=3)
 
     # --- Final Touches ---
     add_overview_header(fig, file_path, df, time_col)
 
     # Format the x-axis to show dates and times nicely
-    fig.autofmt_xdate()
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d\n%H:%M:%S'))
+    locator = mdates.AutoDateLocator(minticks=4, maxticks=8)
+    formatter = mdates.ConciseDateFormatter(locator, tz=LOCAL_TIMEZONE)
+    formatter.formats = ['%Y', '%b', '%d %b', '%H:%M', '%H:%M', '%H:%M:%S']
+    formatter.zero_formats = ['%Y', '%b', '%d %b', '%H:%M', '%H:%M', '%H:%M:%S']
+    ax2.xaxis.set_major_locator(locator)
+    ax2.xaxis.set_major_formatter(formatter)
     ax2.set_xlabel('Timestamp')
+    ax2.xaxis.labelpad = 8
     # Adjust layout to make room for suptitle, button, and legends
-    fig.subplots_adjust(left=0.075, right=0.81, bottom=0.11, top=0.84)
+    fig.subplots_adjust(left=0.09, right=0.79, bottom=0.11, top=0.88)
     add_panel_glow(fig, ax1)
     add_panel_glow(fig, ax2)
 
@@ -325,8 +396,8 @@ def inspect_log(file_path: str):
     ALL_SERIES = {**TEMPERATURE_SERIES, **MAGNETICS_SERIES_LEFT, **MAGNETICS_SERIES_RIGHT}
 
     # Checkboxes for Temperature plot
-    fig.text(0.835, 0.82, "Temperatures", fontsize=9, color=TEXT_MUTED, fontweight='bold', ha='left')
-    ax_check1 = fig.add_axes([0.83, 0.53, 0.15, 0.25])
+    fig.text(0.85, 0.845, "Temperatures", fontsize=8.5, color=TEXT_MUTED, fontweight='bold', ha='left')
+    ax_check1 = fig.add_axes([0.848, 0.60, 0.12, 0.16])
     check1 = CheckButtons(
         ax=ax_check1,
         labels=labels_ax1,
@@ -338,14 +409,15 @@ def inspect_log(file_path: str):
     def toggle_vis_ax1(label):
         line = lines_by_label_ax1[label]
         line.set_visible(not line.get_visible())
+        autoscale_visible_lines(ax1)
         fig.canvas.draw_idle()
 
     check1.on_clicked(toggle_vis_ax1)
     fig._check1 = check1
 
     # Checkboxes for Magnetics plot
-    fig.text(0.835, 0.46, "Magnetics", fontsize=9, color=TEXT_MUTED, fontweight='bold', ha='left')
-    ax_check2 = fig.add_axes([0.83, 0.17, 0.15, 0.25])
+    fig.text(0.85, 0.41, "Magnetics", fontsize=8.5, color=TEXT_MUTED, fontweight='bold', ha='left')
+    ax_check2 = fig.add_axes([0.848, 0.165, 0.12, 0.16])
     check2 = CheckButtons(
         ax=ax_check2,
         labels=labels_ax2,
@@ -357,6 +429,7 @@ def inspect_log(file_path: str):
     def toggle_vis_ax2(label):
         line = lines_by_label_ax2[label]
         line.set_visible(not line.get_visible())
+        autoscale_visible_lines(ax2, ax3)
         fig.canvas.draw_idle()
 
     check2.on_clicked(toggle_vis_ax2)
