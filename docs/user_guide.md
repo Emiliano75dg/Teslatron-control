@@ -237,6 +237,7 @@ The config loader also supports:
 - `config/cryostat_lab_readonly.json`: real lab standard mapping with commands disabled
 - `config/cryostat_lab_control.json`: real lab standard mapping with commands enabled
 - `config/cryostat_standard.example.json`: standard example config
+- `config/cryostat_standard_local_gui.json`: offline GUI config with standard insert profiles on the mock backend
 - `config/heliox_readonly.example.json`: Heliox example, read-only
 - `config/heliox_control.example.json`: Heliox example, writable
 - `config/heliox_local_gui.example.json`: loopback-only frontend test config

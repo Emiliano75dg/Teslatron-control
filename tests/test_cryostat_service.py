@@ -888,7 +888,7 @@ class CryostatConfigTests(unittest.TestCase):
                 "allowed_profiles": {"fisher_probe", "basic_probe"},
             },
             "cryostat_standard_local_gui.json": {
-                "backend": "standard",
+                "backend": "mock",
                 "allowed_profiles": {"fisher_probe", "basic_probe"},
             },
             "cryostat_ethernet.example.json": {
