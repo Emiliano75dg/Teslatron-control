@@ -13,6 +13,7 @@ from teslatron_services.cryostat.config import (
     InsertProfileConfig,
     MercurySensorSetupConfig,
     config_from_mapping,
+    load_config,
 )
 from teslatron_services.cryostat.service import CryostatService
 from teslatron_services.cryostat.state import (
@@ -879,6 +880,42 @@ class CryostatApiTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CryostatConfigTests(unittest.TestCase):
+    def test_documented_cryostat_example_configs_match_backend_constraints(self) -> None:
+        config_dir = Path(__file__).resolve().parents[1] / "config"
+        cases = {
+            "cryostat_standard.example.json": {
+                "backend": "standard",
+                "allowed_profiles": {"fisher_probe", "basic_probe"},
+            },
+            "cryostat_standard_local_gui.json": {
+                "backend": "standard",
+                "allowed_profiles": {"fisher_probe", "basic_probe"},
+            },
+            "cryostat_ethernet.example.json": {
+                "backend": "standard",
+                "allowed_profiles": {"fisher_probe", "basic_probe"},
+            },
+            "heliox_readonly.example.json": {
+                "backend": "heliox",
+                "allowed_profiles": {"heliox_probe"},
+            },
+            "heliox_control.example.json": {
+                "backend": "heliox",
+                "allowed_profiles": {"heliox_probe"},
+            },
+            "heliox_local_gui.example.json": {
+                "backend": "heliox",
+                "allowed_profiles": {"heliox_probe"},
+            },
+        }
+
+        for filename, expected in cases.items():
+            with self.subTest(config=filename):
+                config = load_config(config_dir / filename)
+                self.assertEqual(config.backend, expected["backend"])
+                self.assertEqual(set(config.insert_profiles), expected["allowed_profiles"])
+                self.assertIn(config.active_insert, expected["allowed_profiles"])
+
     def test_default_config_builds_fallback_insert_profile(self) -> None:
         config = config_from_mapping({})
 
