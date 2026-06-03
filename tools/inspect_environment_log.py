@@ -449,15 +449,18 @@ def inspect_log(file_path: str):
 
 def get_file_path_interactively():
     """Opens a file dialog to select a CSV file."""
+    root = None
     try:
         # Import tkinter here to keep it optional
         from tkinter import Tk, filedialog
 
         root = Tk()
         root.withdraw()  # Hide the main window
+        root.update_idletasks()
         file_path = filedialog.askopenfilename(
             title="Select a cryostat environment log file",
             filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
+            parent=root,
         )
         return file_path
     except ImportError:
@@ -469,22 +472,33 @@ def get_file_path_interactively():
         print(f"Could not open file dialog: {e}")
         print("Please provide the file path as a command-line argument.")
         return None
+    finally:
+        if root is not None:
+            try:
+                root.destroy()
+            except Exception:
+                pass
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description='Inspect a Teslatron environment log CSV file by plotting its data.'
+        description='Inspect Teslatron environment log CSV files. Without arguments, opens a file picker.'
     )
     parser.add_argument(
         'file_path',
         nargs='?',
         default=None,
         type=str,
-        help='Optional path to the environment CSV log file. If not provided, a file dialog will open.'
+        help='Optional path to an environment CSV log file. If omitted, a file dialog opens.'
+    )
+    parser.add_argument(
+        '--browse',
+        action='store_true',
+        help='Open the file picker even if you usually launch the script from a shell alias or shortcut.'
     )
     args = parser.parse_args()
 
     # If a file path is provided via command line, process it once and exit.
-    if args.file_path:
+    if args.file_path and not args.browse:
         inspect_log(args.file_path)
     else:
         # Interactive mode: loop until the user cancels the file dialog.

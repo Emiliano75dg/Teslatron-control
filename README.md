@@ -69,6 +69,13 @@ The repository also includes small standalone utilities under `tools/`. For
 example, you can inspect cryostat environment CSV logs with:
 
 ```bash
+python3 tools/inspect_environment_log.py
+```
+
+This opens a file picker so you can choose a log interactively. If you already
+know the path, you can still open a specific file directly:
+
+```bash
 python3 tools/inspect_environment_log.py data/cryostat_environment_YYYY-MM-DD.csv
 ```
 

@@ -380,6 +380,12 @@ The cryostat service periodically saves environment data under the configured
 `log_dir`. A helper script is included to inspect these CSV exports:
 
 ```bash
+python3 tools/inspect_environment_log.py
+```
+
+This opens a file picker. You can also pass a CSV path directly:
+
+```bash
 python3 tools/inspect_environment_log.py data/cryostat_environment_YYYY-MM-DD.csv
 ```
 

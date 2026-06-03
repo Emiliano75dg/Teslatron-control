@@ -20,8 +20,11 @@ class FakeResource:
         self.commands = []
         self.responses = {}
 
-    def set(self, command: str) -> None:
+    def set(self, command: str) -> str:
         self.commands.append(command)
+        if command in self.responses:
+            return self.responses[command]
+        return "STAT:SET:DEV:MOCK:VALID\n"
 
     def query(self, command: str) -> str:
         self.commands.append(command)
@@ -34,6 +37,7 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
     def make_backend(self) -> MercuryCryostatBackend:
         backend = MercuryCryostatBackend.__new__(MercuryCryostatBackend)
         backend.config = CryostatServiceConfig()
+        backend.config.itc.pressure_command_delay_s = 0.0
         backend.config.ips.command_delay_s = 0.0
         backend.itc = FakeResource()
         backend.ips = FakeResource()
@@ -52,6 +56,7 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
 
     def test_set_vti_needle_disables_pressure_loop_before_setting_flow(self) -> None:
         backend = self.make_backend()
+        backend.itc.responses["SET:DEV:DB5.P1:PRES:LOOP:FAUT:OFF"] = "INVALID\n"
 
         backend.set_vti_needle(12.5)
 
@@ -59,9 +64,140 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
             backend.itc.commands,
             [
                 "SET:DEV:DB5.P1:PRES:LOOP:ENAB:OFF",
+                "SET:DEV:DB5.P1:PRES:LOOP:FAUT:OFF",
                 "SET:DEV:DB5.P1:PRES:LOOP:FSET:12.5",
             ],
         )
+
+    def test_set_vti_pressure_sets_pressure_before_enabling_loop(self) -> None:
+        backend = self.make_backend()
+
+        backend.set_vti_pressure(5.5)
+
+        self.assertEqual(
+            backend.itc.commands,
+            [
+                "SET:DEV:DB5.P1:PRES:LOOP:PRST:5.5",
+                "SET:DEV:DB5.P1:PRES:LOOP:FAUT:ON",
+                "SET:DEV:DB5.P1:PRES:LOOP:ENAB:ON",
+            ],
+        )
+
+    def test_set_vti_pressure_tolerates_optional_faut_rejection(self) -> None:
+        backend = self.make_backend()
+        backend.itc.responses["SET:DEV:DB5.P1:PRES:LOOP:FAUT:ON"] = "N/A\n"
+
+        backend.set_vti_pressure(6.5)
+
+        self.assertEqual(
+            backend.itc.commands,
+            [
+                "SET:DEV:DB5.P1:PRES:LOOP:PRST:6.5",
+                "SET:DEV:DB5.P1:PRES:LOOP:FAUT:ON",
+                "SET:DEV:DB5.P1:PRES:LOOP:ENAB:ON",
+            ],
+        )
+
+    def test_set_vti_pressure_after_manual_needle_reenters_pressure_control_mode(self) -> None:
+        backend = self.make_backend()
+        backend.itc.responses["SET:DEV:DB5.P1:PRES:LOOP:FAUT:OFF"] = "INVALID\n"
+
+        backend.set_vti_needle(12.5)
+        backend.set_vti_pressure(4.2)
+
+        self.assertEqual(
+            backend.itc.commands,
+            [
+                "SET:DEV:DB5.P1:PRES:LOOP:ENAB:OFF",
+                "SET:DEV:DB5.P1:PRES:LOOP:FAUT:OFF",
+                "SET:DEV:DB5.P1:PRES:LOOP:FSET:12.5",
+                "SET:DEV:DB5.P1:PRES:LOOP:PRST:4.2",
+                "SET:DEV:DB5.P1:PRES:LOOP:FAUT:ON",
+                "SET:DEV:DB5.P1:PRES:LOOP:ENAB:ON",
+            ],
+        )
+
+    def test_set_vti_pressure_falls_back_to_tset_when_prst_is_rejected(self) -> None:
+        backend = self.make_backend()
+        backend.itc.responses["SET:DEV:DB5.P1:PRES:LOOP:PRST:7.5"] = "INVALID\n"
+
+        backend.set_vti_pressure(7.5)
+
+        self.assertEqual(
+            backend.itc.commands,
+            [
+                "SET:DEV:DB5.P1:PRES:LOOP:PRST:7.5",
+                "SET:DEV:DB5.P1:PRES:LOOP:TSET:7.5",
+                "SET:DEV:DB5.P1:PRES:LOOP:FAUT:ON",
+                "SET:DEV:DB5.P1:PRES:LOOP:ENAB:ON",
+            ],
+        )
+
+    def test_read_state_prefers_aux_needle_valve_readback_when_available(self) -> None:
+        backend = self.make_backend()
+        backend.itc.responses["READ:DEV:DB5.P1:PRES:LOOP:FSET?"] = (
+            "STAT:DEV:DB5.P1:PRES:LOOP:FSET:12.0\n"
+        )
+        backend.itc.responses["READ:DEV:DB5.P1:PRES:LOOP:AUX?"] = (
+            "STAT:DEV:DB5.P1:PRES:LOOP:AUX:DB6.A1\n"
+        )
+        backend.itc.responses["READ:DEV:DB6.A1:AUX:SIG:PERC?"] = (
+            "STAT:DEV:DB6.A1:AUX:SIG:PERC:23.4%\n"
+        )
+        backend.itc.responses["READ:DEV:DB6.A1:AUX:SIG:STEP?"] = (
+            "STAT:DEV:DB6.A1:AUX:SIG:STEP:1234\n"
+        )
+
+        state = backend.read_state()
+
+        self.assertEqual(state.pressure.needle_valve_percent, 23.4)
+        self.assertEqual(state.pressure.needle_valve_setpoint_percent, 12.0)
+        self.assertEqual(state.pressure.needle_valve_step, 1234.0)
+        self.assertEqual(state.pressure.needle_valve_aux_uid, "DB6.A1")
+        self.assertEqual(state.pressure.needle_valve_source, "aux_sig_perc")
+        self.assertTrue(all(command.startswith("READ:") for command in backend.itc.commands))
+
+    def test_read_state_falls_back_to_fset_when_aux_uid_is_unavailable(self) -> None:
+        backend = self.make_backend()
+        backend.itc.responses["READ:DEV:DB5.P1:PRES:LOOP:FSET?"] = (
+            "STAT:DEV:DB5.P1:PRES:LOOP:FSET:12.0\n"
+        )
+        backend.itc.responses["READ:DEV:DB5.P1:PRES:LOOP:AUX?"] = (
+            "STAT:DEV:DB5.P1:PRES:LOOP:AUX:INVALID\n"
+        )
+
+        state = backend.read_state()
+
+        self.assertEqual(state.pressure.needle_valve_percent, 12.0)
+        self.assertEqual(state.pressure.needle_valve_setpoint_percent, 12.0)
+        self.assertIsNone(state.pressure.needle_valve_step)
+        self.assertIsNone(state.pressure.needle_valve_aux_uid)
+        self.assertEqual(state.pressure.needle_valve_source, "fset_fallback")
+        self.assertTrue(all(command.startswith("READ:") for command in backend.itc.commands))
+
+    def test_read_state_falls_back_to_fset_when_aux_percent_is_unavailable(self) -> None:
+        backend = self.make_backend()
+        backend.itc.responses["READ:DEV:DB5.P1:PRES:LOOP:FSET?"] = (
+            "STAT:DEV:DB5.P1:PRES:LOOP:FSET:12.0\n"
+        )
+        backend.itc.responses["READ:DEV:DB5.P1:PRES:LOOP:AUX?"] = (
+            "STAT:DEV:DB5.P1:PRES:LOOP:AUX:DB6.A1\n"
+        )
+        backend.itc.responses["READ:DEV:DB6.A1:AUX:SIG:PERC?"] = (
+            "STAT:DEV:DB6.A1:AUX:SIG:PERC:N/A\n"
+        )
+        backend.itc.responses["READ:DEV:DB6.A1:AUX:SIG:STEP?"] = (
+            "STAT:DEV:DB6.A1:AUX:SIG:STEP:1234\n"
+        )
+
+        state = backend.read_state()
+
+        self.assertEqual(state.pressure.needle_valve_percent, 12.0)
+        self.assertEqual(state.pressure.needle_valve_setpoint_percent, 12.0)
+        self.assertEqual(state.pressure.needle_valve_step, 1234.0)
+        self.assertEqual(state.pressure.needle_valve_aux_uid, "DB6.A1")
+        self.assertEqual(state.pressure.needle_valve_source, "fset_fallback")
+        self.assertTrue(all(command.startswith("READ:") for command in backend.itc.commands))
 
     def test_ramp_field_requires_ready_switch_heater(self) -> None:
         backend = self.make_backend()

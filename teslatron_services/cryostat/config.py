@@ -19,6 +19,7 @@ class MercuryITCConfig:
     timeout_ms: int = 3000
     read_termination: str = "\n"
     write_termination: str = "\n"
+    pressure_command_delay_s: float = 0.2
     probe_signal: str = "DB8.T1"
     probe_loop: str = "DB8.T1"
     vti_signal: str = "MB1.T1"
@@ -28,6 +29,8 @@ class MercuryITCConfig:
     def __post_init__(self) -> None:
         if self.timeout_ms <= 0:
             raise ValueError("Cryostat ITC timeout_ms must be > 0")
+        if self.pressure_command_delay_s < 0:
+            raise ValueError("Cryostat ITC pressure_command_delay_s must be >= 0")
 
 
 @dataclass(slots=True)

@@ -29,6 +29,7 @@ from .state import (
 
 LOW_FIELD_RATE_LIMIT_T_PER_MIN = 0.15
 LOW_FIELD_RATE_WINDOW_T = 1.0
+MERCURY_REJECTION_TOKENS = ("INVALID", "NOT_FOUND", "N/A", "DENIED")
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +228,8 @@ class MockCryostatBackend(CryostatBackend):
                 mbar=self._pressure_mbar,
                 target_mbar=self._pressure_target_mbar,
                 needle_valve_percent=self._needle_valve_percent,
+                needle_valve_setpoint_percent=self._needle_valve_percent,
+                needle_valve_source="mock",
                 mode=self._gas_mode,
             ),
             backend="mock",
@@ -712,6 +715,18 @@ class _GlobalVtiControl:
     def __init__(self, backend: "MercuryCryostatBackend"):
         self.backend = backend
 
+    def _read_needle_valve_readback(self) -> tuple[float | None, float | None, str | None, str]:
+        backend = self.backend
+        pressure_uid = backend.config.itc.pressure
+        aux_uid = backend._read_itc_uid(f"READ:DEV:{pressure_uid}:PRES:LOOP:AUX?")
+        if aux_uid is None:
+            return None, None, None, "unavailable"
+        percent = backend._try_read_itc_float(f"READ:DEV:{aux_uid}:AUX:SIG:PERC?")
+        step = backend._try_read_itc_float(f"READ:DEV:{aux_uid}:AUX:SIG:STEP?")
+        if percent is not None:
+            return percent, step, aux_uid, "aux_sig_perc"
+        return None, step, aux_uid, "unavailable"
+
     def read_snapshot(self) -> _VtiSnapshot:
         backend = self.backend
         vti_K = backend._read_itc_float(f"READ:DEV:{backend.config.itc.vti_signal}:TEMP:SIG:TEMP?")
@@ -732,7 +747,17 @@ class _GlobalVtiControl:
         )
         vti_pid = backend._read_temperature_pid(backend.config.itc.vti_loop)
         pressure = backend._read_itc_float(f"READ:DEV:{backend.config.itc.pressure}:PRES:SIG:PRES?")
-        needle = backend._read_itc_float(f"READ:DEV:{backend.config.itc.pressure}:PRES:LOOP:FSET?")
+        # FSET is the manual-flow/loop setpoint, not the real needle valve position.
+        needle_setpoint = backend._read_itc_float(
+            f"READ:DEV:{backend.config.itc.pressure}:PRES:LOOP:FSET?"
+        )
+        # Prefer the AUX readback when available; fall back to FSET only for compatibility.
+        needle_percent, needle_step, needle_aux_uid, needle_source = (
+            self._read_needle_valve_readback()
+        )
+        if needle_percent is None and needle_setpoint is not None:
+            needle_percent = needle_setpoint
+            needle_source = "fset_fallback"
         pressure_target = backend._read_itc_float(
             f"READ:DEV:{backend.config.itc.pressure}:PRES:LOOP:PRST?"
         )
@@ -744,7 +769,7 @@ class _GlobalVtiControl:
         pressure_mode = _pressure_mode_from_loop_state(
             pressure_loop_enabled,
             pressure_target,
-            needle,
+            needle_setpoint,
         )
         return _VtiSnapshot(
             loop_state=TemperatureLoopState(
@@ -770,7 +795,11 @@ class _GlobalVtiControl:
             pressure_state=PressureState(
                 mbar=pressure,
                 target_mbar=pressure_target,
-                needle_valve_percent=needle,
+                needle_valve_percent=needle_percent,
+                needle_valve_setpoint_percent=needle_setpoint,
+                needle_valve_step=needle_step,
+                needle_valve_aux_uid=needle_aux_uid,
+                needle_valve_source=needle_source if needle_percent is not None else "unavailable",
                 mode=pressure_mode,
             ),
         )
@@ -800,15 +829,25 @@ class _GlobalVtiControl:
 
     def set_needle(self, needle_valve_percent: float) -> None:
         backend = self.backend
-        backend.itc.set(f"SET:DEV:{backend.config.itc.pressure}:PRES:LOOP:ENAB:OFF")
-        backend.itc.set(
+        backend._set_itc_checked(f"SET:DEV:{backend.config.itc.pressure}:PRES:LOOP:ENAB:OFF")
+        backend._set_itc_checked(
+            f"SET:DEV:{backend.config.itc.pressure}:PRES:LOOP:FAUT:OFF",
+            optional=True,
+        )
+        backend._set_itc_checked(
             f"SET:DEV:{backend.config.itc.pressure}:PRES:LOOP:FSET:{needle_valve_percent:.9g}"
         )
 
     def set_pressure(self, pressure_mbar: float) -> None:
         backend = self.backend
-        backend.itc.set(f"SET:DEV:{backend.config.itc.pressure}:PRES:LOOP:ENAB:ON")
-        backend.itc.set(f"SET:DEV:{backend.config.itc.pressure}:PRES:LOOP:PRST:{pressure_mbar:.9g}")
+        backend._set_pressure_loop_setpoint(backend.config.itc.pressure, pressure_mbar)
+        backend._sleep_pressure_command_delay()
+        backend._set_itc_checked(
+            f"SET:DEV:{backend.config.itc.pressure}:PRES:LOOP:FAUT:ON",
+            optional=True,
+        )
+        backend._sleep_pressure_command_delay()
+        backend._set_itc_checked(f"SET:DEV:{backend.config.itc.pressure}:PRES:LOOP:ENAB:ON")
 
     def set_fixed_heater(self, heater_percent: float) -> None:
         backend = self.backend
@@ -1446,6 +1485,31 @@ class MercuryCryostatBackend(CryostatBackend):
         self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:TSET:{target_K:.9g}")
         self.itc.set(f"SET:DEV:{mercury_loop}:TEMP:LOOP:ENAB:ON")
 
+    def _set_itc_checked(self, command: str, optional: bool = False) -> bool:
+        response = self.itc.set(command)
+        response_text = "" if response is None else str(response).strip()
+        if not any(token in response_text.upper() for token in MERCURY_REJECTION_TOKENS):
+            return True
+        if optional:
+            logger.warning("Optional Mercury ITC command rejected: %s -> %s", command, response_text)
+            return False
+        raise RuntimeError(f"Mercury ITC command rejected: {command} -> {response_text}")
+
+    def _set_pressure_loop_setpoint(self, pressure_uid: str, pressure_mbar: float) -> None:
+        prst_command = f"SET:DEV:{pressure_uid}:PRES:LOOP:PRST:{pressure_mbar:.9g}"
+        if self._set_itc_checked(prst_command, optional=True):
+            return
+        tset_command = f"SET:DEV:{pressure_uid}:PRES:LOOP:TSET:{pressure_mbar:.9g}"
+        self._set_itc_checked(tset_command)
+
+    def _pressure_command_delay(self) -> float:
+        return self.config.itc.pressure_command_delay_s
+
+    def _sleep_pressure_command_delay(self) -> None:
+        delay = self._pressure_command_delay()
+        if delay > 0:
+            time.sleep(delay)
+
     def _hold_temperature_loop(self, mercury_loop: str, measured_K: float) -> None:
         self._set_temperature_loop_target(mercury_loop, measured_K, ramp=False)
 
@@ -1551,6 +1615,22 @@ class MercuryCryostatBackend(CryostatBackend):
             return self._read_itc_float(command)
         except MercuryQueryError:
             return None
+
+    def _read_itc_uid(self, command: str) -> str | None:
+        try:
+            response = self.itc.query(command).strip()
+        except MercuryQueryError as exc:
+            logger.debug("Mercury ITC UID query failed for %s: %s", command, exc)
+            return None
+        response_upper = response.upper()
+        if any(token in response_upper for token in MERCURY_REJECTION_TOKENS):
+            return None
+        token = response.rsplit(":", 1)[-1].strip()
+        if not token:
+            return None
+        if any(token.upper() == rejection for rejection in MERCURY_REJECTION_TOKENS):
+            return None
+        return token
 
     def _read_itc_bool(self, command: str) -> bool:
         return _extract_bool(self.itc.query(command))

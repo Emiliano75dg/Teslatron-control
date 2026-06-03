@@ -113,6 +113,10 @@ class PressureState:
     mbar: float | None = None
     target_mbar: float | None = None
     needle_valve_percent: float | None = None
+    needle_valve_setpoint_percent: float | None = None
+    needle_valve_step: float | None = None
+    needle_valve_aux_uid: str | None = None
+    needle_valve_source: str = "unknown"
     mode: GasControlMode = GasControlMode.UNKNOWN
 
 
