@@ -65,6 +65,7 @@
 
 html {
   scroll-behavior: smooth;
+  --tabs-offset: 0px;
 }
 
 body {
@@ -176,7 +177,7 @@ h4 {
 
 .tabs {
   position: sticky;
-  top: 104px;
+  top: var(--tabs-offset);
   z-index: 19;
   display: flex;
   gap: var(--space-2);
@@ -1088,10 +1089,6 @@ code {
 }
 
 @media (max-width: 1100px) {
-  .tabs {
-    top: 120px;
-  }
-
   .topbar-shell,
   .panel-heading,
   .plot-block-heading,
@@ -1135,7 +1132,6 @@ code {
 
 @media (max-width: 760px) {
   .tabs {
-    top: 144px;
     padding-inline: 12px;
   }
 

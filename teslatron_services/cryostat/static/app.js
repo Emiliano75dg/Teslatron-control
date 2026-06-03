@@ -109,6 +109,26 @@ function setStatusBadge(id, text, level = "neutral") {
   node.className = `status-badge ${level}`;
 }
 
+function updateStickyOffsets() {
+  const topbar = document.querySelector(".topbar");
+  if (!topbar) {
+    return;
+  }
+  document.documentElement.style.setProperty("--tabs-offset", `${topbar.offsetHeight}px`);
+}
+
+function bindResponsiveLayout() {
+  updateStickyOffsets();
+  window.addEventListener("resize", updateStickyOffsets);
+  if (typeof ResizeObserver !== "undefined") {
+    const topbar = document.querySelector(".topbar");
+    if (topbar) {
+      const observer = new ResizeObserver(() => updateStickyOffsets());
+      observer.observe(topbar);
+    }
+  }
+}
+
 function addEvent(message) {
   const events = el("events");
   const item = document.createElement("li");
@@ -159,6 +179,7 @@ function applyConfigSnapshot(config) {
   setText("readOnlyNoticeCommand", accessText);
   setBadge("readOnlyBadge", accessText, config.read_only ? "read-only" : "ok");
   document.body.classList.toggle("read-only", Boolean(config.read_only));
+  updateStickyOffsets();
   applyCapabilities(config);
   setControlsEnabled(!config.read_only);
   setRecipeControlsEnabled(!config.read_only);
@@ -1658,8 +1679,16 @@ function bindCommands() {
     }), "To zero");
   });
   el("holdButton").addEventListener("click", () => runCommand(() => postJson("/commands/hold"), "Hold"));
-  el("clampButton").addEventListener("click", () => runCommand(() => postJson("/commands/clamp"), "Clamp"));
-  el("abortButton").addEventListener("click", () => runCommand(() => postJson("/commands/abort"), "Abort"));
+  el("clampButton").addEventListener("click", () => runConfirmedCommand(
+    () => postJson("/commands/clamp"),
+    "Clamp",
+    "Clamp the magnet output now? This is an immediate protective action.",
+  ));
+  el("abortButton").addEventListener("click", () => runConfirmedCommand(
+    () => postJson("/commands/abort"),
+    "Abort",
+    "Abort the current cryostat operation? Active ramps will be interrupted.",
+  ));
   el("shutdownButton").addEventListener("click", async () => {
     if (!window.confirm("Stop this Teslatron service instance and free its port?")) {
       return;
@@ -1806,6 +1835,9 @@ function bindRecipes() {
     runRecipeCommand(() => postJson("/recipes/acknowledge"), "Recipe continue");
   });
   el("abortRecipeButton").addEventListener("click", () => {
+    if (!window.confirm("Abort the active recipe? The sequence will stop immediately.")) {
+      return;
+    }
     runRecipeCommand(() => postJson("/recipes/abort"), "Recipe abort");
   });
 }
@@ -1857,8 +1889,16 @@ async function runCommand(action, label) {
   }
 }
 
+async function runConfirmedCommand(action, label, confirmationMessage) {
+  if (!window.confirm(confirmationMessage)) {
+    return;
+  }
+  await runCommand(action, label);
+}
+
 loadConfig()
   .then(() => {
+    bindResponsiveLayout();
     bindTabs();
     bindCommands();
     initializePlotSeriesSelection();
