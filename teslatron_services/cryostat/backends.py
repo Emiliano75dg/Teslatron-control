@@ -977,7 +977,17 @@ class _GlobalFieldControl:
                 f"Clamp blocked: magnet output current is {current_A:.4g} A; "
                 "manual allows clamp only below 1 A"
             )
+        if backend._read_magnet_action() in {MagnetAction.TO_SET, MagnetAction.TO_ZERO}:
+            backend.ips.set(f"SET:DEV:{group}:PSU:ACTN:HOLD")
+            backend._wait_for_magnet_action(
+                MagnetAction.HOLD,
+                label="magnet HOLD before clamp",
+            )
         backend.ips.set(f"SET:DEV:{group}:PSU:ACTN:CLMP")
+        backend._wait_for_magnet_action(
+            MagnetAction.CLAMP,
+            label="magnet clamp confirmation",
+        )
         backend._field_target_T = None
         backend._field_rate_T_per_min = None
         backend._field_requested_rate_T_per_min = None
@@ -1574,6 +1584,25 @@ class MercuryCryostatBackend(CryostatBackend):
                 "Magnet ramp blocked while the persistent switch is transitioning; "
                 f"wait {switch_state.delay_s:.0f} s after changing the switch heater"
             )
+
+    def _wait_for_magnet_action(
+        self,
+        expected: MagnetAction,
+        *,
+        label: str,
+        timeout_s: float | None = None,
+    ) -> None:
+        deadline = monotonic() + (
+            timeout_s
+            if timeout_s is not None
+            else max(1.0, self.config.ips.command_delay_s * 20, getattr(self.ips, "timeout_s", 1.0))
+        )
+        poll_interval_s = max(0.05, self.config.ips.command_delay_s)
+        while monotonic() < deadline:
+            if self._read_magnet_action() == expected:
+                return
+            time.sleep(poll_interval_s)
+        raise TimeoutError(f"Timed out waiting for {label}")
 
     def _maybe_adjust_field_rate(
         self,
