@@ -597,7 +597,7 @@
                 <dt>Point mode</dt><dd>Pause recipe, measure, then acknowledge completion or failure.</dd>
                 <dt>Start mode</dt><dd>Confirm acquisition started, then let the ramp proceed.</dd>
                 <dt>Stop mode</dt><dd>Confirm acquisition stopped before the recipe continues.</dd>
-                <dt>Preferred fields</dt><dd><code>sample_temperature_K</code>, <code>field_T</code>, <code>safe_to_measure</code></dd>
+                <dt>Preferred fields</dt><dd><code>sample_temperature_K</code>, <code>field_T</code>, <code>magnet_temperature_K</code>, <code>magnet_voltage_V</code>, <code>safe_to_measure</code></dd>
               </dl>
             </article>
             <article class="external-guide-card">
@@ -677,7 +677,8 @@
               request, <code>GET /external-measurements/pending</code> returns
               <code>{"pending": false}</code>. The lightweight
               <code>GET /measurement-context</code> endpoint still returns the latest available
-              sample temperature, field, and safety context without changing recipe state.
+              sample temperature, field, magnet telemetry, and safety context without changing
+              recipe state.
             </p>
           </article>
         </div>

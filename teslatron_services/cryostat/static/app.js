@@ -345,6 +345,8 @@ function renderExternalMeasurementsFromState(data) {
       ? data.temperature.sample.temperature_K
       : null,
     field_T: data.field ? data.field.B_T : null,
+    magnet_temperature_K: data.field ? data.field.magnet_temperature_K : null,
+    magnet_voltage_V: data.field ? data.field.output_voltage_V : null,
     safe_to_measure: data.safety ? data.safety.safe_to_measure : null,
   };
   if (!state.measurementContext) {
@@ -357,6 +359,8 @@ function renderExternalMeasurementsFromState(data) {
       recipe_status: recipe.status,
       sample_temperature_K: context.sample_temperature_K,
       field_T: context.field_T,
+      magnet_temperature_K: context.magnet_temperature_K,
+      magnet_voltage_V: context.magnet_voltage_V,
       safe_to_measure: context.safe_to_measure,
     };
   }

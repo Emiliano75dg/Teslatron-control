@@ -78,13 +78,16 @@ Recommended response shape:
   "timestamp_iso": "2024-03-09T10:00:00.123Z",
   "sample_temperature_K": 4.21,
   "field_T": 1.5,
+  "magnet_temperature_K": 4.3,
+  "magnet_voltage_V": 0.018,
   "safe_to_measure": true
 }
 ```
 
-Use explicit JSON field names such as `sample_temperature_K` and `field_T`. Do not use an anonymous
-array like `[T, B]`, because that is fragile and harder to evolve safely across LabVIEW and Python
-code.
+Use explicit JSON field names such as `sample_temperature_K`, `field_T`,
+`magnet_temperature_K`, and `magnet_voltage_V`. Do not use an anonymous array
+like `[T, B]`, because that is fragile and harder to evolve safely across
+LabVIEW and Python code.
 
 For stable-point measurements, recipes can use an `external_measurement` step with `mode: "point"`
 so the cryostat workflow pauses until LabVIEW confirms completion. For continuous acquisitions,

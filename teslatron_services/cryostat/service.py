@@ -50,6 +50,8 @@ class CryostatService:
             .replace("+00:00", "Z"),
             "sample_temperature_K": self._state.temperature.sample.temperature_K,
             "field_T": self._state.field.B_T,
+            "magnet_temperature_K": self._state.field.magnet_temperature_K,
+            "magnet_voltage_V": self._state.field.output_voltage_V,
             "safe_to_measure": self._state.safety.safe_to_measure,
         }
 

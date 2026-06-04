@@ -181,11 +181,14 @@ Recommended response shape:
   "timestamp_iso": "2024-03-09T10:00:00.123Z",
   "sample_temperature_K": 4.21,
   "field_T": 1.5,
+  "magnet_temperature_K": 4.3,
+  "magnet_voltage_V": 0.018,
   "safe_to_measure": true
 }
 ```
 
-Use explicit JSON fields such as `sample_temperature_K` and `field_T`. Do not
+Use explicit JSON fields such as `sample_temperature_K`, `field_T`,
+`magnet_temperature_K`, and `magnet_voltage_V`. Do not
 use anonymous arrays like `[T, B]`, because they are fragile across LabVIEW,
 Python, and future API revisions.
 
