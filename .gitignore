@@ -13,3 +13,5 @@ test*
 .ruff_cache/
 data/*.csv
 data/**/*.jsonl
+.vscode/
+backup-pre-upstream-sync-*/
