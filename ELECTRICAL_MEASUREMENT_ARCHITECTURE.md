@@ -28,9 +28,22 @@ Use two service layers:
    - runs measurement plans independently from the cryostat polling cadence
    - saves electrical measurements together with a cryostat snapshot
 
+The standard local HTTP port for this electrical measurement service is
+`8775`. This is a service port, not an instrument-side socket port.
+
 This matches the existing architectural direction in `SERVICE_ARCHITECTURE.md`:
 electrical measurement services should read cryostat state instead of opening
 Mercury controllers directly.
+
+Recommended service-port convention in this repository:
+
+- `8765`: cryostat service, read-only or default local startup
+- `8766`: cryostat service, control-enabled standard session
+- `8767`: cryostat service, Heliox session
+- `8775`: electrical measurement service
+
+Keep these distinct from instrument ports such as Mercury on `7020` or SCPI
+devices on `5025`.
 
 ## Why not put electrical logic inside the cryostat service
 
@@ -589,6 +602,8 @@ The electrical service could expose:
 - `POST /plans/validate`
 - `GET /results/latest`
 - `WS /ws/state`
+
+When run locally, that API should normally listen on `127.0.0.1:8775`.
 
 On the cryostat side, recipe integration should also support:
 

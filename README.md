@@ -37,6 +37,16 @@ The codebase currently contains two closely related service layers:
 - `teslatron_services/electrical`: companion service for electrical measurements
   that consumes cryostat state instead of opening Mercury controllers directly
 
+Recommended HTTP port convention:
+
+- `8765`: cryostat service, read-only or default local startup
+- `8766`: cryostat service, control-enabled standard session
+- `8767`: cryostat service, Heliox session
+- `8775`: electrical measurement service
+
+These are service ports of the local HTTP API. They are separate from
+instrument-side TCP ports such as `7020` or `5025`.
+
 The cryostat service supports three backends:
 
 - `mock`: offline development without hardware
@@ -104,6 +114,22 @@ curl http://127.0.0.1:8765/health
 curl http://127.0.0.1:8765/state
 curl http://127.0.0.1:8765/config
 ```
+
+### Electrical service
+
+The electrical service is a separate FastAPI process. It does not control the
+Mercury hardware directly; instead, it reads cryostat context from the cryostat
+service and stores that context together with electrical measurements.
+
+Start it with the standard electrical-service port:
+
+```bash
+python3 -m teslatron_services.electrical --config config/electrical.mock.example.json --port 8775
+```
+
+The example electrical configs expect the cryostat service on `http://127.0.0.1:8765`
+unless you override `electrical.cryostat.state_url` and
+`electrical.cryostat.recipe_signal_url`.
 
 ## Lab cryostat service
 
@@ -280,6 +306,14 @@ For a fuller description and an example row, see:
 ```text
 docs/electrical_measurements.md
 ```
+
+## Glossary
+
+- `cryostat service`: the HTTP service under `teslatron_services/cryostat` that owns cryostat state, GUI, recipes, and command endpoints
+- `electrical service`: the HTTP service under `teslatron_services/electrical` that runs electrical measurement plans while reusing cryostat context
+- `service port`: a local HTTP port used by one of the FastAPI services, such as `8765`, `8766`, `8767`, or `8775`
+- `instrument port`: a TCP port exposed by a physical instrument or vendor socket interface, such as Mercury on `7020` or SCPI instruments on `5025`
+- `dummy local port`: a loopback-only TCP endpoint used for offline GUI checks, such as `65001` or `65002`
 
 ## Maintainer
 

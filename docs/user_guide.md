@@ -42,6 +42,8 @@ It should not open the Mercury iTC or iPS directly. Instead, it polls the
 cryostat service and stores the latest environment snapshot together with the
 electrical data.
 
+The standard local HTTP port for the electrical service is `8775`.
+
 ## 3. Supported cryostat backends
 
 The cryostat service currently supports three backends.
@@ -186,6 +188,18 @@ For GUI-only frontend checks without hardware:
 python3 -m teslatron_services --config config/heliox_local_gui.example.json --port 8767
 ```
 
+### E. Electrical-service startup
+
+Use this when you want a dedicated measurement service that consumes cryostat
+state instead of opening Mercury sessions directly:
+
+```bash
+python3 -m teslatron_services.electrical --config config/electrical.mock.example.json --port 8775
+```
+
+The default electrical examples assume the cryostat service is reachable on
+`http://127.0.0.1:8765`.
+
 ## 7. Live safety rules
 
 For real-hardware sessions, the short version is:
@@ -258,6 +272,19 @@ The electrical service config is documented more deeply in:
 
 - `ELECTRICAL_MEASUREMENT_ARCHITECTURE.md`
 - `docs/electrical_measurements.md`
+
+### Port glossary
+
+- `8765`: cryostat service, read-only or default local startup
+- `8766`: cryostat service, control-enabled standard session
+- `8767`: cryostat service, Heliox session
+- `8775`: electrical service
+- `65001-65002`: loopback-only dummy endpoints for offline GUI checks
+- `7020`: Mercury instrument-side TCP socket port
+- `5025`: common SCPI instrument-side TCP socket port
+
+Service ports belong to local FastAPI processes. Instrument-side ports belong
+to hardware or vendor socket interfaces and are configured separately.
 
 ## 9. API overview
 

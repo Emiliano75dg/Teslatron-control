@@ -34,12 +34,25 @@ Control enabled:
 python3 -m teslatron_services --config config/cryostat_lab_control.json --port 8766
 ```
 
+Electrical service, when used alongside the cryostat service:
+
+```bash
+python3 -m teslatron_services.electrical --config config/electrical.mock.example.json --port 8775
+```
+
 Open the GUI:
 
 ```text
 http://127.0.0.1:8765   (read-only)
 http://127.0.0.1:8766   (control)
 ```
+
+Port convention used in this repository:
+
+- `8765`: cryostat service, read-only or default local startup
+- `8766`: cryostat service, control-enabled standard session
+- `8767`: cryostat service, Heliox session
+- `8775`: electrical measurement service
 
 ## 3. Safe shutdown and port release
 
@@ -55,6 +68,7 @@ http://127.0.0.1:8766   (control)
 ss -tanp | grep 8765
 ss -tanp | grep 8766
 ss -tanp | grep 8767
+ss -tanp | grep 8775
 ```
 
 - If the command returns no matching line, the port is no longer in use.
@@ -109,6 +123,10 @@ Recommended endpoints:
 - `GET /external-measurements/pending` for pending recipe requests
 - `POST /external-measurements/complete` to acknowledge `completed` or `failed`
 - `POST /recipes/signal` when a direct signal-based flow is preferred
+
+If you run the dedicated electrical measurement service instead of a pure
+LabVIEW-driven flow, keep `8775` as the standard local HTTP port unless a lab
+session requires a different assignment.
 
 Recommended polling rate for LabVIEW is about 1-5 Hz for slow acquisitions.
 The payload uses explicit field names such as `sample_temperature_K` and

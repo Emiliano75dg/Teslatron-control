@@ -49,6 +49,16 @@ Electrical measurement services should own only their electrical instruments.
 They should read the latest cryostat state from the cryostat service instead of
 opening iTC/iPS directly.
 
+Recommended local HTTP port convention across the repository:
+
+- `8765`: cryostat service, read-only or default local startup
+- `8766`: cryostat service, control-enabled standard session
+- `8767`: cryostat service, Heliox session
+- `8775`: electrical measurement service
+
+These are service-side HTTP ports. They are separate from instrument-side TCP
+ports such as Mercury on `7020` or SCPI instruments on `5025`.
+
 ## Current MVP
 
 The current implementation has three cryostat backends:
@@ -133,6 +143,13 @@ the Mercury control session:
 
 ```bash
 python3 -m teslatron_services --config config/heliox_readonly.example.json --port 8767
+```
+
+If you also run the dedicated electrical measurement service, use its standard
+HTTP port:
+
+```bash
+python3 -m teslatron_services.electrical --config config/electrical.mock.example.json --port 8775
 ```
 
 ## Example commands
