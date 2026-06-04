@@ -1303,7 +1303,16 @@ async function postJson(url, payload = null) {
   const response = await fetch(url, options);
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(text || response.statusText);
+    let detail = text || response.statusText;
+    try {
+      const parsed = text ? JSON.parse(text) : null;
+      if (parsed && typeof parsed.detail === "string" && parsed.detail.trim()) {
+        detail = parsed.detail;
+      }
+    } catch {
+      // Keep the plain response body when the server did not return JSON.
+    }
+    throw new Error(detail);
   }
   return text ? JSON.parse(text) : {};
 }
@@ -1877,16 +1886,34 @@ function showTab(tab) {
 async function runCommand(action, label) {
   const message = el("commandMessage");
   message.className = "message";
-  message.textContent = `${label}...`;
+  message.textContent = pendingCommandMessage(label);
   try {
     await action();
     message.textContent = `${label} accepted`;
     addEvent(`${label} accepted`);
   } catch (error) {
     message.className = "message error";
-    message.textContent = error.message;
+    message.textContent = formatCommandError(label, error);
     addEvent(`${label} failed`);
   }
+}
+
+function pendingCommandMessage(label) {
+  if (label === "Clamp") {
+    return "Clamp requested. Waiting for iPS confirmation...";
+  }
+  return `${label}...`;
+}
+
+function formatCommandError(label, error) {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  if (label === "Clamp" && rawMessage.includes("Timed out waiting for magnet clamp confirmation")) {
+    return "Clamp command sent, but the iPS did not confirm CLAMP in time. Check the hardware state before retrying.";
+  }
+  if (label === "Clamp" && rawMessage.includes("Timed out waiting for magnet HOLD before clamp")) {
+    return "Clamp command paused because the iPS did not reach HOLD in time. Verify that the field ramp has really stopped.";
+  }
+  return rawMessage;
 }
 
 async function runConfirmedCommand(action, label, confirmationMessage) {

@@ -256,6 +256,11 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
         backend.ips.responses["READ:DEV:GRPZ:PSU:SIG:CURR?"] = (
             "STAT:DEV:GRPZ:PSU:SIG:CURR:0.2000A\n"
         )
+        backend._read_magnet_action = lambda: MagnetAction.HOLD
+        wait_calls = []
+        backend._wait_for_magnet_action = lambda action, *, label, timeout_s=None: wait_calls.append(
+            (action, label, timeout_s)
+        )
 
         backend.clamp()
 
@@ -264,6 +269,39 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
             [
                 "READ:DEV:GRPZ:PSU:SIG:CURR?",
                 "SET:DEV:GRPZ:PSU:ACTN:CLMP",
+            ],
+        )
+        self.assertEqual(
+            wait_calls,
+            [(MagnetAction.CLAMP, "magnet clamp confirmation", None)],
+        )
+
+    def test_clamp_forces_hold_before_clamp_when_field_is_still_ramping(self) -> None:
+        backend = self.make_backend()
+        backend.ips.responses["READ:DEV:GRPZ:PSU:SIG:CURR?"] = (
+            "STAT:DEV:GRPZ:PSU:SIG:CURR:0.2000A\n"
+        )
+        backend._read_magnet_action = lambda: MagnetAction.TO_SET
+        wait_calls = []
+        backend._wait_for_magnet_action = lambda action, *, label, timeout_s=None: wait_calls.append(
+            (action, label, timeout_s)
+        )
+
+        backend.clamp()
+
+        self.assertEqual(
+            backend.ips.commands,
+            [
+                "READ:DEV:GRPZ:PSU:SIG:CURR?",
+                "SET:DEV:GRPZ:PSU:ACTN:HOLD",
+                "SET:DEV:GRPZ:PSU:ACTN:CLMP",
+            ],
+        )
+        self.assertEqual(
+            wait_calls,
+            [
+                (MagnetAction.HOLD, "magnet HOLD before clamp", None),
+                (MagnetAction.CLAMP, "magnet clamp confirmation", None),
             ],
         )
 
