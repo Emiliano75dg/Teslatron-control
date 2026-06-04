@@ -25,18 +25,18 @@ const el = (id) => document.getElementById(id);
 const RECENT_PLOT_WINDOW_S = 30 * 60;
 const MAX_HISTORY_WINDOW_S = 24 * 60 * 60;
 const TEMPERATURE_SERIES = [
-  { key: "sample_K", label: "Sample", color: "#f44336" },
-  { key: "vti_K", label: "VTI", color: "#ffffff" },
-  { key: "magnet_K", label: "Magnet", color: "#52d273" },
-  { key: "pt1_K", label: "PT1", color: "#24c6dc" },
-  { key: "pt2_K", label: "PT2", color: "#ffd43b" },
+  { key: "sample_K", label: "Sample", color: "#ff7a59" },
+  { key: "vti_K", label: "VTI", color: "#7fdff0" },
+  { key: "magnet_K", label: "Magnet", color: "#7be495" },
+  { key: "pt1_K", label: "PT1", color: "#7ab8ff" },
+  { key: "pt2_K", label: "PT2", color: "#ffd166" },
 ];
 const MAGNETICS_SERIES = [
-  { key: "field_T", label: "Field", color: "#00ff4c", axis: "left" },
-  { key: "current_A", label: "Current", color: "#4cc9f0", axis: "left" },
-  { key: "voltage_V", label: "Voltage", color: "#f72585", axis: "left" },
-  { key: "pressure_mbar", label: "Pressure", color: "#ffb000", axis: "right" },
-  { key: "needle_percent", label: "Needle", color: "#c15cff", axis: "right" },
+  { key: "field_T", label: "Field", color: "#6ef2a3", axis: "left" },
+  { key: "current_A", label: "Current", color: "#68d6ff", axis: "left" },
+  { key: "voltage_V", label: "Voltage", color: "#ff74a6", axis: "left" },
+  { key: "pressure_mbar", label: "Pressure", color: "#ffcf70", axis: "right" },
+  { key: "needle_percent", label: "Needle", color: "#c9a5ff", axis: "right" },
 ];
 const PLOT_SERIES_GROUPS = {
   temperature: TEMPERATURE_SERIES,
@@ -93,8 +93,40 @@ function setText(id, value) {
 
 function setBadge(id, text, level = "neutral") {
   const node = el(id);
+  if (!node) {
+    return;
+  }
   node.textContent = text;
   node.className = `badge ${level}`;
+}
+
+function setStatusBadge(id, text, level = "neutral") {
+  const node = el(id);
+  if (!node) {
+    return;
+  }
+  node.textContent = text;
+  node.className = `status-badge ${level}`;
+}
+
+function updateStickyOffsets() {
+  const topbar = document.querySelector(".topbar");
+  if (!topbar) {
+    return;
+  }
+  document.documentElement.style.setProperty("--tabs-offset", `${topbar.offsetHeight}px`);
+}
+
+function bindResponsiveLayout() {
+  updateStickyOffsets();
+  window.addEventListener("resize", updateStickyOffsets);
+  if (typeof ResizeObserver !== "undefined") {
+    const topbar = document.querySelector(".topbar");
+    if (topbar) {
+      const observer = new ResizeObserver(() => updateStickyOffsets());
+      observer.observe(topbar);
+    }
+  }
 }
 
 function addEvent(message) {
@@ -142,7 +174,12 @@ async function deleteJson(url) {
 function applyConfigSnapshot(config) {
   state.config = config;
   setText("subtitle", `${config.backend} backend`);
-  setText("readOnlyNotice", config.read_only ? "Read only" : "Writable mock/session");
+  const accessText = config.read_only ? "READ ONLY" : "Writable session";
+  setText("readOnlyNotice", accessText);
+  setText("readOnlyNoticeCommand", accessText);
+  setBadge("readOnlyBadge", accessText, config.read_only ? "read-only" : "ok");
+  document.body.classList.toggle("read-only", Boolean(config.read_only));
+  updateStickyOffsets();
   applyCapabilities(config);
   setControlsEnabled(!config.read_only);
   setRecipeControlsEnabled(!config.read_only);
@@ -273,6 +310,10 @@ function render(data) {
   setText("fieldTarget", `Target ${formatUnit(field.target_T, "T", 4)}`);
   setText("pressureValue", formatUnit(pressure.mbar, "mbar", 4));
   setText("pressureTarget", `Target ${formatUnit(pressure.target_mbar, "mbar", 4)}`);
+  setStatusBadge("sampleOverviewState", summarizeLoopState(sample), summarizeLoopLevel(sample));
+  setStatusBadge("vtiOverviewState", summarizeLoopState(vti), summarizeLoopLevel(vti));
+  setStatusBadge("fieldOverviewState", summarizeFieldState(field), summarizeFieldLevel(field));
+  setStatusBadge("pressureOverviewState", summarizePressureState(pressure), summarizePressureLevel(pressure));
 
   renderLoop("sample", sample);
   renderLoop("vti", vti);
@@ -474,6 +515,99 @@ function renderLoop(prefix, loop) {
   setText(`${prefix}Pid`, formatPid(loop.pid));
   setText(`${prefix}Mode`, loop.mode);
   setText(`${prefix}State`, loop.ramping ? "Ramping" : loop.stable ? "Stable" : "Tracking");
+}
+
+function summarizeLoopState(loop) {
+  if (!loop) {
+    return "--";
+  }
+  if (loop.ramping) {
+    return "Ramping";
+  }
+  if (loop.stable) {
+    return "Stable";
+  }
+  if (loop.loop_enabled === false) {
+    return "Loop Off";
+  }
+  return "Tracking";
+}
+
+function summarizeLoopLevel(loop) {
+  if (!loop) {
+    return "neutral";
+  }
+  if (loop.ramping) {
+    return "warn";
+  }
+  if (loop.stable) {
+    return "ok";
+  }
+  if (loop.loop_enabled === false) {
+    return "neutral";
+  }
+  return "warn";
+}
+
+function summarizeFieldState(field) {
+  if (!field) {
+    return "--";
+  }
+  if (field.clamped) {
+    return "Clamped";
+  }
+  if (field.ramping) {
+    return "Ramping";
+  }
+  if (field.at_setpoint) {
+    return "At setpoint";
+  }
+  return "Holding";
+}
+
+function summarizeFieldLevel(field) {
+  if (!field) {
+    return "neutral";
+  }
+  if (field.clamped) {
+    return "error";
+  }
+  if (field.ramping) {
+    return "warn";
+  }
+  if (field.at_setpoint) {
+    return "ok";
+  }
+  return "neutral";
+}
+
+function summarizePressureState(pressure) {
+  if (!pressure) {
+    return "--";
+  }
+  if (pressure.mode === "PRESSURE_CONTROL") {
+    return "Pressure Ctrl";
+  }
+  if (pressure.mode === "FIXED_NEEDLE") {
+    return "Manual Needle";
+  }
+  if (pressure.mode === "OFF") {
+    return "Gas Off";
+  }
+  return formatText(pressure.mode);
+}
+
+function summarizePressureLevel(pressure) {
+  if (!pressure) {
+    return "neutral";
+  }
+  if (pressure.mode === "PRESSURE_CONTROL") {
+    return "ok";
+  }
+  if (pressure.mode === "FIXED_NEEDLE") {
+    return "warn";
+  }
+  return "neutral";
 }
 
 function renderHelioxDetails(data) {
@@ -796,7 +930,7 @@ function formatSwitchHeaterRemaining(switchHeater) {
 }
 
 function renderPressure(pressure) {
-  setText("pressureMode", pressure.mode);
+  setStatusBadge("pressureMode", pressure.mode, summarizePressureLevel(pressure));
   setText("pressureDetail", formatUnit(pressure.mbar, "mbar", 4));
   setText("pressureTargetDetail", formatUnit(pressure.target_mbar, "mbar", 4));
   setText("needleValue", formatUnit(pressure.needle_valve_percent, "%", 1));
@@ -1710,6 +1844,9 @@ function bindRecipes() {
     runRecipeCommand(() => postJson("/recipes/acknowledge"), "Recipe continue");
   });
   el("abortRecipeButton").addEventListener("click", () => {
+    if (!window.confirm("Abort the active recipe? The sequence will stop immediately.")) {
+      return;
+    }
     runRecipeCommand(() => postJson("/recipes/abort"), "Recipe abort");
   });
 }
@@ -1785,8 +1922,10 @@ async function runConfirmedCommand(action, label, confirmationMessage) {
   }
   await runCommand(action, label);
 }
+
 loadConfig()
   .then(() => {
+    bindResponsiveLayout();
     bindTabs();
     bindCommands();
     initializePlotSeriesSelection();

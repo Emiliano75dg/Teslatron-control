@@ -8,15 +8,25 @@
   </head>
   <body>
     <header class="topbar">
-      <div>
-        <h1>Teslatron Q-MAT Control</h1>
-        <p id="subtitle">Cryostat service for the Q-MAT lab</p>
-      </div>
-      <div class="status-strip">
-        <span id="connectionBadge" class="badge neutral">Connecting</span>
-        <span id="backendBadge" class="badge">backend</span>
-        <span id="modeBadge" class="badge">mode</span>
-        <span id="safetyBadge" class="badge">safety</span>
+      <div class="topbar-shell">
+        <div class="topbar-brand">
+          <p class="eyebrow">Cryostat Control Surface</p>
+          <h1>Teslatron Q-MAT Control</h1>
+          <p id="subtitle">Cryostat service for the Q-MAT lab</p>
+        </div>
+        <div class="topbar-status">
+          <div class="status-cluster" aria-label="Service status">
+            <span class="status-label">Service</span>
+            <span id="connectionBadge" class="badge neutral">Connecting</span>
+            <span id="backendBadge" class="badge neutral">backend</span>
+          </div>
+          <div class="status-cluster" aria-label="Operating status">
+            <span class="status-label">Operation</span>
+            <span id="modeBadge" class="badge neutral">mode</span>
+            <span id="safetyBadge" class="badge neutral">safety</span>
+            <span id="readOnlyBadge" class="badge warn">READ ONLY</span>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -34,40 +44,79 @@
     <main class="layout">
       <section class="panel overview-panel view-section" data-view="overview">
         <div class="panel-heading">
-          <h2>Environment</h2>
-          <span id="timestamp" class="muted">--</span>
+          <div>
+            <h2>Environment Overview</h2>
+            <p class="section-copy">Fast visual readout of temperatures, field and VTI gas conditions.</p>
+          </div>
+          <div class="overview-meta">
+            <span class="status-chip">
+              <span class="status-chip-label">Access</span>
+              <strong id="readOnlyNotice">--</strong>
+            </span>
+            <span class="status-chip">
+              <span class="status-chip-label">Updated</span>
+              <strong id="timestamp">--</strong>
+            </span>
+          </div>
         </div>
         <div class="summary-grid">
-          <div class="metric" data-capability="sample_loop">
-            <span>Sample</span>
-            <strong id="sampleTemperature">--</strong>
-            <small id="sampleTarget">Target --</small>
-          </div>
-          <div class="metric" data-capability="vti_loop">
-            <span>VTI</span>
-            <strong id="vtiTemperature">--</strong>
-            <small id="vtiTarget">Target --</small>
-          </div>
-          <div class="metric" data-capability="field_control">
-            <span>Field</span>
-            <strong id="fieldValue">--</strong>
-            <small id="fieldTarget">Target --</small>
-          </div>
-          <div class="metric" data-capability="gas_control">
-            <span>Pressure</span>
-            <strong id="pressureValue">--</strong>
-            <small id="pressureTarget">Target --</small>
-          </div>
+          <article class="metric-card" data-capability="sample_loop">
+            <div class="metric-card-head">
+              <span class="metric-kicker">Temperature Loop</span>
+              <h3>Sample</h3>
+            </div>
+            <strong id="sampleTemperature" class="metric-value">--</strong>
+            <div class="metric-meta">
+              <span id="sampleTarget" class="metric-target">Target --</span>
+              <span id="sampleOverviewState" class="status-badge neutral">--</span>
+            </div>
+          </article>
+          <article class="metric-card" data-capability="vti_loop">
+            <div class="metric-card-head">
+              <span class="metric-kicker">Temperature Loop</span>
+              <h3>VTI</h3>
+            </div>
+            <strong id="vtiTemperature" class="metric-value">--</strong>
+            <div class="metric-meta">
+              <span id="vtiTarget" class="metric-target">Target --</span>
+              <span id="vtiOverviewState" class="status-badge neutral">--</span>
+            </div>
+          </article>
+          <article class="metric-card" data-capability="field_control">
+            <div class="metric-card-head">
+              <span class="metric-kicker">Magnetics</span>
+              <h3>Field</h3>
+            </div>
+            <strong id="fieldValue" class="metric-value">--</strong>
+            <div class="metric-meta">
+              <span id="fieldTarget" class="metric-target">Target --</span>
+              <span id="fieldOverviewState" class="status-badge neutral">--</span>
+            </div>
+          </article>
+          <article class="metric-card" data-capability="gas_control">
+            <div class="metric-card-head">
+              <span class="metric-kicker">VTI Gas</span>
+              <h3>Pressure</h3>
+            </div>
+            <strong id="pressureValue" class="metric-value">--</strong>
+            <div class="metric-meta">
+              <span id="pressureTarget" class="metric-target">Target --</span>
+              <span id="pressureOverviewState" class="status-badge neutral">--</span>
+            </div>
+          </article>
         </div>
       </section>
 
       <section class="panel view-section hidden" data-view="itc" data-capability="temperature_control">
         <div class="panel-heading">
-          <h2>ITC</h2>
+          <div>
+            <h2>ITC</h2>
+            <p class="section-copy">Detailed status of sample and VTI temperature loops.</p>
+          </div>
           <span class="muted">Sample and VTI loops</span>
         </div>
         <div class="loop-grid">
-          <article class="loop-block" data-capability="sample_loop">
+          <article class="surface-card loop-block" data-capability="sample_loop">
             <h3>Sample</h3>
             <dl>
               <dt>Temperature</dt><dd id="sampleTemperatureDetail">--</dd>
@@ -83,7 +132,7 @@
               <dt>State</dt><dd id="sampleState">--</dd>
             </dl>
           </article>
-          <article class="loop-block hidden" id="helioxDetailsPanel">
+          <article class="surface-card loop-block hidden" id="helioxDetailsPanel">
             <h3>Heliox internals</h3>
             <dl>
               <dt>Status</dt><dd id="helioxStatus">--</dd>
@@ -104,7 +153,7 @@
               <dt>Raw sorb T</dt><dd id="helioxRawSorbTemperature">--</dd>
             </dl>
           </article>
-          <article class="loop-block" data-capability="vti_loop">
+          <article class="surface-card loop-block" data-capability="vti_loop">
             <h3>VTI</h3>
             <dl>
               <dt>Temperature</dt><dd id="vtiTemperatureDetail">--</dd>
@@ -125,21 +174,24 @@
 
       <section class="panel view-section hidden" data-view="ips" data-capability="field_control">
         <div class="panel-heading">
-          <h2>IPS</h2>
+          <div>
+            <h2>IPS</h2>
+            <p class="section-copy">Magnet field status and switch heater readiness.</p>
+          </div>
           <div class="panel-heading-actions">
             <span id="switchHeaterIpsBadge" class="badge neutral">Switch --</span>
             <span class="muted">Magnet and switch heater</span>
           </div>
         </div>
         <div class="field-grid">
-          <div class="gauge">
+          <div class="surface-card gauge">
             <div class="gauge-face">
               <div id="fieldNeedle" class="needle"></div>
             </div>
             <strong id="fieldGaugeValue">--</strong>
             <span>Magnetic field</span>
           </div>
-          <dl class="dense-list">
+          <dl class="surface-card dense-list">
             <dt>Current</dt><dd id="fieldCurrent">--</dd>
             <dt>Voltage</dt><dd id="fieldVoltage">--</dd>
             <dt>Rate</dt><dd id="fieldRate">--</dd>
@@ -157,23 +209,33 @@
 
       <section class="panel view-section hidden" data-view="itc" data-capability="gas_control">
         <div class="panel-heading">
-          <h2>VTI Gas</h2>
-          <span id="pressureMode" class="muted">--</span>
+          <div>
+            <h2>VTI Gas</h2>
+            <p class="section-copy">Pressure mode, readback and needle valve opening.</p>
+          </div>
+          <span id="pressureMode" class="status-badge neutral">--</span>
         </div>
-        <div class="bar-row">
-          <span>Needle valve</span>
-          <div class="bar"><div id="needleBar"></div></div>
-          <strong id="needleValue">--</strong>
+        <div class="gas-grid">
+          <div class="surface-card">
+            <div class="bar-row">
+              <span>Needle valve</span>
+              <div class="bar"><div id="needleBar"></div></div>
+              <strong id="needleValue">--</strong>
+            </div>
+          </div>
+          <dl class="surface-card dense-list two-col">
+            <dt>Pressure</dt><dd id="pressureDetail">--</dd>
+            <dt>Target</dt><dd id="pressureTargetDetail">--</dd>
+          </dl>
         </div>
-        <dl class="dense-list two-col">
-          <dt>Pressure</dt><dd id="pressureDetail">--</dd>
-          <dt>Target</dt><dd id="pressureTargetDetail">--</dd>
-        </dl>
       </section>
 
       <section class="panel plot-panel view-section hidden" data-view="plots">
         <div class="panel-heading">
-          <h2>Plots</h2>
+          <div>
+            <h2>Plots</h2>
+            <p class="section-copy">Short-window trends and a customizable history window.</p>
+          </div>
           <div class="plot-controls">
             <span id="plotWindow" class="muted">No points</span>
             <label class="plot-window-control">Custom window
@@ -231,117 +293,158 @@
 
       <section class="panel command-panel view-section hidden" data-view="commands">
         <div class="panel-heading">
-          <h2>Commands</h2>
-          <span id="readOnlyNotice" class="muted">--</span>
+          <div>
+            <h2>Commands</h2>
+            <p class="section-copy">Operational controls grouped by subsystem and risk level.</p>
+          </div>
+          <span id="readOnlyNoticeCommand" class="status-badge neutral">--</span>
         </div>
-        <div class="shutdown-row">
-          <button id="shutdownButton" class="danger-button" type="button">Shutdown service</button>
-          <span class="muted">Stops this server instance and releases its port after cleanup.</span>
-        </div>
-        <p id="commandCapabilitiesNotice" class="muted hidden">Some commands are hidden because they are not available for the active insert.</p>
-        <form id="temperatureForm" class="command-form" data-capability="temperature_control">
-          <label>Loop
-            <select name="loop">
-              <option value="sample">Sample</option>
-              <option value="vti">VTI</option>
-              <option value="both">Both, VTI 90%</option>
-            </select>
-          </label>
-          <label>Target K
-            <input name="target_K" type="number" step="0.001" value="4.2">
-          </label>
-          <label>Rate K/min
-            <input name="rate_K_per_min" type="number" step="0.001" value="1">
-          </label>
-          <button type="submit">Ramp T</button>
-        </form>
-        <form id="targetTemperatureForm" class="command-form" data-capability="temperature_control">
-          <label>Loop
-            <select name="loop">
-              <option value="sample">Sample</option>
-              <option value="vti">VTI</option>
-              <option value="both">Both, VTI 90%</option>
-            </select>
-          </label>
-          <label>Sample target K
-            <input name="target_K" type="number" step="0.001" value="4.2">
-          </label>
-          <button type="submit">Set Target</button>
-        </form>
-        <form id="fixedHeaterForm" class="command-form" data-capability="fixed_heater">
-          <label>Loop
-            <select name="loop">
-              <option value="sample">Sample</option>
-              <option value="vti">VTI</option>
-              <option value="both">Both</option>
-            </select>
-          </label>
-          <label>Heater %
-            <input name="heater_percent" type="number" step="0.1" min="0" max="100" value="0">
-          </label>
-          <button type="submit">Fixed Power</button>
-        </form>
-        <form id="pidForm" class="command-form pid-form" data-capability="pid_control">
-          <label>Loop
-            <select name="loop">
-              <option value="sample">Sample</option>
-              <option value="vti">VTI</option>
-              <option value="both">Both</option>
-            </select>
-          </label>
-          <label>P
-            <input name="p" type="number" step="0.001" min="0" value="10">
-          </label>
-          <label>I
-            <input name="i" type="number" step="0.001" min="0" value="1">
-          </label>
-          <label>D
-            <input name="d" type="number" step="0.001" min="0" value="0">
-          </label>
-          <label class="checkbox-label">
-            <input name="auto" type="checkbox">
-            Auto PID table
-          </label>
-          <button type="submit">Set PID</button>
-        </form>
-        <form id="gasForm" class="command-form" data-capability="gas_control">
-          <label>Mode
-            <select name="mode">
-              <option value="pressure">Pressure</option>
-              <option value="needle">Needle</option>
-            </select>
-          </label>
-          <label>Pressure mbar
-            <input name="pressure_mbar" type="number" step="0.001" min="0" value="10">
-          </label>
-          <label>Needle %
-            <input name="needle_valve_percent" type="number" step="0.1" min="0" max="100" value="0">
-          </label>
-          <button type="submit">Set VTI Gas</button>
-        </form>
-        <form id="fieldForm" class="command-form" data-capability="field_control">
-          <label>Target T
-            <input name="target_T" type="number" step="0.0001" value="0">
-          </label>
-          <label>Rate T/min
-            <input name="rate_T_per_min" type="number" step="0.0001" value="0.1">
-          </label>
-          <button type="submit">Ramp B</button>
-        </form>
-        <div class="button-row" data-capability="field_control">
-          <span id="switchHeaterCommandBadge" class="badge neutral">Switch --</span>
-          <button id="switchHeaterButton" class="ghost" type="button" data-command-control>Switch Heater</button>
-          <button id="toZeroButton" type="button">To Zero</button>
-          <button id="holdButton" type="button">Hold</button>
-          <button id="clampButton" type="button">Clamp</button>
-          <button id="abortButton" class="danger" type="button">Abort</button>
-        </div>
+        <p id="commandCapabilitiesNotice" class="section-notice hidden">Some commands are hidden because they are not available for the active insert.</p>
+
+        <section class="control-section" data-capability="temperature_control">
+          <div class="control-section-head">
+            <h3>Temperature Control</h3>
+            <p>Set targets, ramps, heater mode and PID terms.</p>
+          </div>
+          <div class="control-stack">
+            <form id="temperatureForm" class="command-form">
+              <label>Loop
+                <select name="loop">
+                  <option value="sample">Sample</option>
+                  <option value="vti">VTI</option>
+                  <option value="both">Both, VTI 90%</option>
+                </select>
+              </label>
+              <label>Target K
+                <input name="target_K" type="number" step="0.001" value="4.2">
+              </label>
+              <label>Rate K/min
+                <input name="rate_K_per_min" type="number" step="0.001" value="1">
+              </label>
+              <button type="submit">Ramp T</button>
+            </form>
+            <form id="targetTemperatureForm" class="command-form">
+              <label>Loop
+                <select name="loop">
+                  <option value="sample">Sample</option>
+                  <option value="vti">VTI</option>
+                  <option value="both">Both, VTI 90%</option>
+                </select>
+              </label>
+              <label>Sample target K
+                <input name="target_K" type="number" step="0.001" value="4.2">
+              </label>
+              <button type="submit">Set Target</button>
+            </form>
+            <form id="fixedHeaterForm" class="command-form" data-capability="fixed_heater">
+              <label>Loop
+                <select name="loop">
+                  <option value="sample">Sample</option>
+                  <option value="vti">VTI</option>
+                  <option value="both">Both</option>
+                </select>
+              </label>
+              <label>Heater %
+                <input name="heater_percent" type="number" step="0.1" min="0" max="100" value="0">
+              </label>
+              <button type="submit">Fixed Power</button>
+            </form>
+            <form id="pidForm" class="command-form pid-form" data-capability="pid_control">
+              <label>Loop
+                <select name="loop">
+                  <option value="sample">Sample</option>
+                  <option value="vti">VTI</option>
+                  <option value="both">Both</option>
+                </select>
+              </label>
+              <label>P
+                <input name="p" type="number" step="0.001" min="0" value="10">
+              </label>
+              <label>I
+                <input name="i" type="number" step="0.001" min="0" value="1">
+              </label>
+              <label>D
+                <input name="d" type="number" step="0.001" min="0" value="0">
+              </label>
+              <label class="checkbox-label">
+                <input name="auto" type="checkbox">
+                Auto PID table
+              </label>
+              <button type="submit">Set PID</button>
+            </form>
+          </div>
+        </section>
+
+        <section class="control-section" data-capability="gas_control">
+          <div class="control-section-head">
+            <h3>VTI Gas</h3>
+            <p>Switch between pressure mode and manual needle control.</p>
+          </div>
+          <div class="control-stack">
+            <form id="gasForm" class="command-form">
+              <label>Mode
+                <select name="mode">
+                  <option value="pressure">Pressure</option>
+                  <option value="needle">Needle</option>
+                </select>
+              </label>
+              <label>Pressure mbar
+                <input name="pressure_mbar" type="number" step="0.001" min="0" value="10">
+              </label>
+              <label>Needle %
+                <input name="needle_valve_percent" type="number" step="0.1" min="0" max="100" value="0">
+              </label>
+              <button type="submit">Set VTI Gas</button>
+            </form>
+          </div>
+        </section>
+
+        <section class="control-section" data-capability="field_control">
+          <div class="control-section-head">
+            <h3>Magnet Control</h3>
+            <p>Field ramps, zeroing and persistent switch heater actions.</p>
+          </div>
+          <div class="control-stack">
+            <form id="fieldForm" class="command-form">
+              <label>Target T
+                <input name="target_T" type="number" step="0.0001" value="0">
+              </label>
+              <label>Rate T/min
+                <input name="rate_T_per_min" type="number" step="0.0001" value="0.1">
+              </label>
+              <button type="submit">Ramp B</button>
+            </form>
+            <div class="button-row action-row">
+              <span id="switchHeaterCommandBadge" class="badge neutral">Switch --</span>
+              <button id="switchHeaterButton" class="ghost emphasis-button" type="button" data-command-control>Switch Heater</button>
+              <button id="toZeroButton" type="button">To Zero</button>
+              <button id="holdButton" class="ghost" type="button">Hold</button>
+              <button id="clampButton" class="warn-button" type="button">Clamp</button>
+              <button id="abortButton" class="danger" type="button">Abort</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="control-section danger-zone">
+          <div class="control-section-head">
+            <h3>Safety / Critical</h3>
+            <p>Use only when you intentionally want to interrupt or stop service activity.</p>
+          </div>
+          <div class="button-row danger-row">
+            <button id="shutdownButton" class="danger-button" type="button">Shutdown service</button>
+            <span class="danger-copy">Stops this server instance and releases its port after cleanup.</span>
+          </div>
+        </section>
+
         <p id="commandMessage" class="message"></p>
       </section>
 
       <section class="panel recipe-panel view-section hidden" data-view="recipes">
         <div class="panel-heading">
-          <h2>Recipes</h2>
+          <div>
+            <h2>Recipes</h2>
+            <p class="section-copy">Build, save and execute multi-step cryostat procedures.</p>
+          </div>
           <span id="recipeStatusBadge" class="badge neutral">Idle</span>
         </div>
         <div class="recipe-grid">
@@ -364,7 +467,7 @@
                 Add continuous-ramp template
               </button>
             </div>
-            <div class="recipe-add-row">
+            <div class="recipe-add-row recipe-saved-row">
               <label>Saved recipes
                 <select id="savedRecipeSelect"></select>
               </label>
@@ -374,7 +477,7 @@
               <button id="duplicateRecipeButton" class="ghost" type="button">Duplicate</button>
               <button id="deleteRecipeButton" class="danger" type="button">Delete</button>
             </div>
-            <div class="recipe-add-row">
+            <div class="recipe-add-row recipe-step-builder">
               <label>Step
                 <select id="recipeStepType">
                   <option value="ramp_temperature">Ramp T</option>
@@ -447,12 +550,24 @@
               </label>
               <button id="addRecipeStepButton" class="ghost" type="button">Add</button>
             </div>
-            <ol id="recipeSteps" class="recipe-steps"></ol>
-            <div class="button-row">
-              <button id="startRecipeButton" type="submit">Start Recipe</button>
-              <button id="clearRecipeButton" class="ghost" type="button">Clear</button>
-              <button id="ackRecipeButton" class="ghost" type="button">Continue</button>
-              <button id="abortRecipeButton" class="danger" type="button">Abort Recipe</button>
+            <div class="recipe-step-list-card">
+              <div class="recipe-step-list-head">
+                <h3>Steps</h3>
+                <span class="muted">Editable sequence for the next run</span>
+              </div>
+              <ol id="recipeSteps" class="recipe-steps"></ol>
+            </div>
+            <div class="recipe-run-zone">
+              <div class="recipe-run-copy">
+                <h3>Run controls</h3>
+                <p>Start a recipe, acknowledge waits or stop an active sequence.</p>
+              </div>
+              <div class="button-row">
+                <button id="startRecipeButton" type="submit">Start Recipe</button>
+                <button id="clearRecipeButton" class="ghost" type="button">Clear</button>
+                <button id="ackRecipeButton" class="ghost" type="button">Continue</button>
+                <button id="abortRecipeButton" class="danger" type="button">Abort Recipe</button>
+              </div>
             </div>
             <p id="recipeMessage" class="message"></p>
           </form>
@@ -509,7 +624,10 @@
 
       <section class="panel external-panel view-section hidden" data-view="external">
         <div class="panel-heading">
-          <h2>External Measurements</h2>
+          <div>
+            <h2>External Measurements</h2>
+            <p class="section-copy">Integration helpers and live payload previews for external tools.</p>
+          </div>
           <span id="externalPendingBadge" class="badge neutral">No pending request</span>
         </div>
         <div class="external-grid">
@@ -567,7 +685,10 @@
 
       <section class="panel config-panel view-section hidden" data-view="config">
         <div class="panel-heading">
-          <h2>Config</h2>
+          <div>
+            <h2>Config</h2>
+            <p class="section-copy">Service setup, insert mappings and raw configuration snapshot.</p>
+          </div>
           <span class="muted">Service setup and insert profiles</span>
         </div>
         <div class="config-grid">
@@ -659,7 +780,10 @@
 
       <section class="panel event-panel view-section" data-view="overview">
         <div class="panel-heading">
-          <h2>Events</h2>
+          <div>
+            <h2>Events</h2>
+            <p class="section-copy">Recent state transitions, backend messages and operator actions.</p>
+          </div>
           <button id="clearEvents" class="ghost" type="button">Clear</button>
         </div>
         <ol id="events" class="events"></ol>

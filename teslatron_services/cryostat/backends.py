@@ -1501,7 +1501,11 @@ class MercuryCryostatBackend(CryostatBackend):
         if not any(token in response_text.upper() for token in MERCURY_REJECTION_TOKENS):
             return True
         if optional:
-            logger.warning("Optional Mercury ITC command rejected: %s -> %s", command, response_text)
+            logger.warning(
+                "Optional Mercury ITC command rejected: %s -> %s",
+                command,
+                response_text,
+            )
             return False
         raise RuntimeError(f"Mercury ITC command rejected: {command} -> {response_text}")
 
