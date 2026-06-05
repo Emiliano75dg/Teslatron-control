@@ -24,6 +24,7 @@ const state = {
 const el = (id) => document.getElementById(id);
 const RECENT_PLOT_WINDOW_S = 30 * 60;
 const MAX_HISTORY_WINDOW_S = 24 * 60 * 60;
+const LOG_VIEWER_URL = "http://127.0.0.1:8501/";
 const TEMPERATURE_SERIES = [
   { key: "sample_K", label: "Sample", color: "#ff7a59" },
   { key: "vti_K", label: "VTI", color: "#7fdff0" },
@@ -1618,6 +1619,9 @@ function updateRecipeControlState(status = null) {
 }
 
 function bindCommands() {
+  el("openLogViewerButton").addEventListener("click", () => {
+    window.open(LOG_VIEWER_URL, "_blank", "noopener,noreferrer");
+  });
   el("temperatureForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);

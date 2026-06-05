@@ -72,21 +72,36 @@ pip install pyvisa
 Optional analysis tools for working with exported data afterwards:
 
 ```bash
-pip install numpy pandas matplotlib
+pip install numpy pandas matplotlib plotly streamlit
 ```
 
 The repository also includes small standalone utilities under `tools/`. For
 example, you can inspect cryostat environment CSV logs with:
 
 ```bash
-python3 tools/inspect_environment_log.py
+streamlit run tools/inspect_environment_log_streamlit.py
 ```
 
-This opens a file picker so you can choose a log interactively. If you already
-know the path, you can still open a specific file directly:
+This launches a local Streamlit app where you can upload one or more log files,
+inspect merged traces with Plotly, browse reconstructed events, and preview the
+raw dataframe in a separate tab.
+
+This offline log viewer is separate from the live cryostat control GUI. The
+main live GUI continues to be served by the FastAPI cryostat service at the
+service root `/`.
+
+The live GUI also includes an `Open Log Viewer` button that opens the separate
+offline Streamlit app in a new browser tab. By default it points to:
+
+```text
+http://127.0.0.1:8501/
+```
+
+The old entry point is kept only as a legacy wrapper and now prints a message
+that redirects you to the Streamlit app:
 
 ```bash
-python3 tools/inspect_environment_log.py data/cryostat_environment_YYYY-MM-DD.csv
+python3 tools/inspect_environment_log.py
 ```
 
 For PyVisa to work, you will need to install the [National Instruments VISA library](https://pyvisa.readthedocs.io/en/latest/faq/getting_nivisa.html#faq-getting-nivisa).
@@ -106,6 +121,9 @@ Then open:
 ```text
 http://127.0.0.1:8765/
 ```
+
+This root page is the live cryostat GUI served by the FastAPI service from the
+static frontend under `teslatron_services/cryostat/static/`.
 
 Useful first checks:
 
