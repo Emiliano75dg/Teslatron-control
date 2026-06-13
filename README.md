@@ -106,6 +106,47 @@ python3 tools/inspect_environment_log.py
 
 For PyVisa to work, you will need to install the [National Instruments VISA library](https://pyvisa.readthedocs.io/en/latest/faq/getting_nivisa.html#faq-getting-nivisa).
 
+## One-command startup
+
+If you want a command that works from any folder, install it once:
+
+```bash
+./install-teslatron-command
+```
+
+After that, you can launch from any terminal with:
+
+```bash
+teslatron
+```
+
+If you prefer not to install anything, from the repository root you can still use:
+
+```bash
+./teslatron
+```
+
+This starts a safe mock session on:
+
+```text
+http://127.0.0.1:8765/
+```
+
+Useful variants:
+
+```bash
+./teslatron readonly
+./teslatron control
+./teslatron heliox
+./teslatron --open-browser
+```
+
+If the project is installed as a package, the same launcher is also available as:
+
+```bash
+teslatron
+```
+
 ## Quick start
 
 ### Offline development with the mock backend

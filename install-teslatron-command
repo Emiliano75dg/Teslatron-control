@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+echo "Installing Teslatron command for the current user..."
+python3 -m pip install --user -e "$SCRIPT_DIR"
+
+LOCAL_BIN="$HOME/.local/bin"
+case ":${PATH:-}:" in
+  *":$LOCAL_BIN:"*)
+    ;;
+  *)
+    echo
+    echo "The command was installed, but $LOCAL_BIN is not in PATH."
+    echo "Add this line to ~/.bashrc, then reopen the terminal:"
+    echo "export PATH=\"$HOME/.local/bin:\$PATH\""
+    ;;
+esac
+
+echo
+echo "You can now run:"
+echo "  teslatron"
+echo "  teslatron readonly"
+echo "  teslatron control"
