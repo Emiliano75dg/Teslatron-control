@@ -26,18 +26,18 @@ const RECENT_PLOT_WINDOW_S = 30 * 60;
 const MAX_HISTORY_WINDOW_S = 24 * 60 * 60;
 const LOG_VIEWER_URL = "http://127.0.0.1:8501/";
 const TEMPERATURE_SERIES = [
-  { key: "sample_K", label: "Sample", color: "#ff7a59" },
-  { key: "vti_K", label: "VTI", color: "#7fdff0" },
-  { key: "magnet_K", label: "Magnet", color: "#7be495" },
-  { key: "pt1_K", label: "PT1", color: "#7ab8ff" },
-  { key: "pt2_K", label: "PT2", color: "#ffd166" },
+  { key: "sample_K", label: "Sample", color: "#fbbf24" },
+  { key: "vti_K", label: "VTI", color: "#38bdf8" },
+  { key: "magnet_K", label: "Magnet", color: "#34d399" },
+  { key: "pt1_K", label: "PT1", color: "#60a5fa" },
+  { key: "pt2_K", label: "PT2", color: "#a78bfa" },
 ];
 const MAGNETICS_SERIES = [
-  { key: "field_T", label: "Field", color: "#6ef2a3", axis: "left" },
-  { key: "current_A", label: "Current", color: "#68d6ff", axis: "left" },
-  { key: "voltage_V", label: "Voltage", color: "#ff74a6", axis: "left" },
-  { key: "pressure_mbar", label: "Pressure", color: "#ffcf70", axis: "right" },
-  { key: "needle_percent", label: "Needle", color: "#c9a5ff", axis: "right" },
+  { key: "field_T", label: "Field", color: "#34d399", axis: "left" },
+  { key: "current_A", label: "Current", color: "#38bdf8", axis: "left" },
+  { key: "voltage_V", label: "Voltage", color: "#f472b6", axis: "left" },
+  { key: "pressure_mbar", label: "Pressure", color: "#fbbf24", axis: "right" },
+  { key: "needle_percent", label: "Needle", color: "#a78bfa", axis: "right" },
 ];
 const PLOT_SERIES_GROUPS = {
   temperature: TEMPERATURE_SERIES,
@@ -315,6 +315,17 @@ function render(data) {
   setStatusBadge("vtiOverviewState", summarizeLoopState(vti), summarizeLoopLevel(vti));
   setStatusBadge("fieldOverviewState", summarizeFieldState(field), summarizeFieldLevel(field));
   setStatusBadge("pressureOverviewState", summarizePressureState(pressure), summarizePressureLevel(pressure));
+
+  setStatusBadge("overviewSampleState", summarizeLoopState(sample), summarizeLoopLevel(sample));
+  setStatusBadge("overviewVtiState", summarizeLoopState(vti), summarizeLoopLevel(vti));
+  setText("overviewSampleHeater", formatUnit(sample.heater_percent, "%", 2));
+  setText("overviewSampleRate", formatUnit(sample.rate_K_per_min, "K/min", 3));
+  setText("overviewSampleMode", sample.mode || "--");
+  setText("overviewSampleReached", formatBool(sample.target_reached));
+  setText("overviewVtiHeater", formatUnit(vti.heater_percent, "%", 2));
+  setText("overviewVtiRate", formatUnit(vti.rate_K_per_min, "K/min", 3));
+  setText("overviewVtiMode", vti.mode || "--");
+  setText("overviewVtiReached", formatBool(vti.target_reached));
 
   renderLoop("sample", sample);
   renderLoop("vti", vti);
@@ -886,6 +897,15 @@ function renderField(field, switchHeater) {
   renderSwitchHeater(switchHeater);
   const normalized = Math.max(-1, Math.min(1, (field.B_T || 0) / 12));
   el("fieldNeedle").style.transform = `rotate(${normalized * 90}deg)`;
+
+  setText("overviewFieldGaugeValue", formatUnit(field.B_T, "T", 4));
+  setText("overviewFieldCurrent", formatUnit(field.output_current_A, "A", 4));
+  setText("overviewFieldVoltage", formatUnit(field.output_voltage_V, "V", 4));
+  setText("overviewMagnetTemp", formatUnit(field.magnet_temperature_K, "K", 3));
+  const overviewNeedle = el("overviewFieldNeedle");
+  if (overviewNeedle) {
+    overviewNeedle.style.transform = `rotate(${normalized * 90}deg)`;
+  }
 }
 
 function renderSwitchHeater(switchHeater) {
@@ -911,6 +931,7 @@ function renderSwitchHeater(switchHeater) {
   }
   setBadge("switchHeaterIpsBadge", badgeText, badgeLevel);
   setBadge("switchHeaterCommandBadge", badgeText, badgeLevel);
+  setBadge("overviewSwitchBadge", badgeText, badgeLevel);
 
   const button = el("switchHeaterButton");
   if (!button) {
@@ -940,6 +961,15 @@ function renderPressure(pressure) {
   setText("pressureTargetDetail", formatUnit(pressure.target_mbar, "mbar", 4));
   setText("needleValue", formatUnit(pressure.needle_valve_percent, "%", 1));
   el("needleBar").style.width = `${Math.max(0, Math.min(100, pressure.needle_valve_percent || 0))}%`;
+
+  setStatusBadge("overviewPressureMode", pressure.mode, summarizePressureLevel(pressure));
+  setText("overviewPressureDetail", formatUnit(pressure.mbar, "mbar", 4));
+  setText("overviewPressureTargetDetail", formatUnit(pressure.target_mbar, "mbar", 4));
+  setText("overviewNeedleValue", formatUnit(pressure.needle_valve_percent, "%", 1));
+  const overviewNeedleBar = el("overviewNeedleBar");
+  if (overviewNeedleBar) {
+    overviewNeedleBar.style.width = `${Math.max(0, Math.min(100, pressure.needle_valve_percent || 0))}%`;
+  }
 }
 
 function renderConfig(config) {
@@ -1618,7 +1648,39 @@ function updateRecipeControlState(status = null) {
   }
 }
 
+function currentTheme() {
+  return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+}
+
+function syncThemeButton() {
+  const button = el("themeToggleButton");
+  if (button) {
+    button.textContent = currentTheme() === "light" ? "Dark theme" : "Light theme";
+  }
+}
+
+function setupThemeToggle() {
+  const button = el("themeToggleButton");
+  if (!button) {
+    return;
+  }
+  syncThemeButton();
+  button.addEventListener("click", () => {
+    const next = currentTheme() === "light" ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", next);
+    try {
+      localStorage.setItem("cryostat-theme", next);
+    } catch (e) {
+      /* ignore storage errors */
+    }
+    syncThemeButton();
+    updateStickyOffsets();
+    renderCharts();
+  });
+}
+
 function bindCommands() {
+  setupThemeToggle();
   el("openLogViewerButton").addEventListener("click", () => {
     window.open(LOG_VIEWER_URL, "_blank", "noopener,noreferrer");
   });
@@ -1949,7 +2011,30 @@ loadConfig()
     addEvent(error.message);
   });
 
+let plotPalette = {
+  bg: "#08131f",
+  grid: "#11283f",
+  border: "#21466b",
+  axis: "#7da3c2",
+  label: "#9bbdd8",
+  nodata: "#5d82a3",
+};
+
+function refreshPlotPalette() {
+  const css = getComputedStyle(document.documentElement);
+  const read = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
+  plotPalette = {
+    bg: read("--plot-bg", "#08131f"),
+    grid: read("--plot-grid", "#11283f"),
+    border: read("--plot-border", "#21466b"),
+    axis: read("--plot-axis", "#7da3c2"),
+    label: read("--plot-label", "#9bbdd8"),
+    nodata: read("--plot-nodata", "#5d82a3"),
+  };
+}
+
 function renderCharts() {
+  refreshPlotPalette();
   renderPlotLegendControls();
   const recentPoints = historyForWindow(RECENT_PLOT_WINDOW_S);
   const customWindowS = state.customPlotMinutes * 60;
@@ -1960,6 +2045,13 @@ function renderCharts() {
 
   drawPlotPair("recent", recentPoints);
   drawPlotPair("custom", customPoints);
+
+  drawTimeSeries(
+    el("overviewTrendChart"),
+    recentPoints,
+    selectedPlotSeries("temperature"),
+    "Temperature (K)",
+  );
 }
 
 function drawPlotPair(prefix, points) {
@@ -2014,7 +2106,7 @@ function drawTimeSeries(canvas, points, series, leftUnit, rightUnit = null) {
   }
 
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "#070b0f";
+  ctx.fillStyle = plotPalette.bg;
   ctx.fillRect(0, 0, width, height);
 
   const padding = {
@@ -2060,7 +2152,7 @@ function drawTimeSeries(canvas, points, series, leftUnit, rightUnit = null) {
 }
 
 function drawGrid(ctx, plot, width, height, scale) {
-  ctx.strokeStyle = "#24313c";
+  ctx.strokeStyle = plotPalette.grid;
   ctx.lineWidth = 1 * scale;
   ctx.beginPath();
   for (let i = 0; i <= 5; i += 1) {
@@ -2074,15 +2166,15 @@ function drawGrid(ctx, plot, width, height, scale) {
     ctx.lineTo(x, plot.y + plot.h);
   }
   ctx.stroke();
-  ctx.strokeStyle = "#53616f";
+  ctx.strokeStyle = plotPalette.border;
   ctx.strokeRect(plot.x, plot.y, plot.w, plot.h);
-  ctx.fillStyle = "#070b0f";
+  ctx.fillStyle = plotPalette.bg;
   ctx.fillRect(0, 0, width, plot.y - 1);
   ctx.fillRect(0, plot.y + plot.h + 1, width, height - plot.y - plot.h);
 }
 
 function drawNoData(ctx, plot, scale, message = "Waiting for data") {
-  ctx.fillStyle = "#93a2af";
+  ctx.fillStyle = plotPalette.nodata;
   ctx.font = `${13 * scale}px system-ui, sans-serif`;
   ctx.textAlign = "center";
   ctx.fillText(message, plot.x + plot.w / 2, plot.y + plot.h / 2);
@@ -2118,7 +2210,7 @@ function valueRange(points, series) {
 function drawAxisLabels(ctx, plot, scale, leftRange, leftUnit, rightRange, rightUnit) {
   ctx.font = `${11 * scale}px ui-monospace, monospace`;
   ctx.textBaseline = "middle";
-  ctx.fillStyle = "#b8c4ce";
+  ctx.fillStyle = plotPalette.axis;
   ctx.textAlign = "right";
   for (let i = 0; i <= 5; i += 1) {
     const value = leftRange.max - ((leftRange.max - leftRange.min) * i) / 5;
@@ -2153,7 +2245,7 @@ function drawTimeLabels(ctx, plot, scale, minTime, maxTime) {
   ctx.font = `${11 * scale}px ui-monospace, monospace`;
   ctx.textBaseline = "top";
   ctx.textAlign = "center";
-  ctx.fillStyle = "#b8c4ce";
+  ctx.fillStyle = plotPalette.axis;
   const labels = [
     { x: plot.x, value: minTime },
     { x: plot.x + plot.w / 2, value: (minTime + maxTime) / 2 },
@@ -2163,7 +2255,7 @@ function drawTimeLabels(ctx, plot, scale, minTime, maxTime) {
     ctx.fillText(formatClockTime(label.value), label.x, plot.y + plot.h + 10 * scale);
   }
   ctx.font = `${12 * scale}px system-ui, sans-serif`;
-  ctx.fillStyle = "#d7e0e8";
+  ctx.fillStyle = plotPalette.label;
   ctx.fillText("Time", plot.x + plot.w / 2, plot.y + plot.h + 32 * scale);
 }
 

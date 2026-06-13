@@ -4,6 +4,17 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Teslatron Q-MAT Control</title>
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("cryostat-theme");
+          if (t === "light" || t === "dark") {
+            document.documentElement.setAttribute("data-theme", t);
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <link rel="stylesheet" href="/static/fonts/fonts.css">
     <link rel="stylesheet" href="/static/styles.css">
   </head>
   <body>
@@ -28,6 +39,9 @@
           </div>
           <div class="status-cluster topbar-actions" aria-label="External tools">
             <span class="status-label">Tools</span>
+            <button id="themeToggleButton" class="topbar-link-button ghost" type="button" aria-label="Toggle color theme">
+              Light theme
+            </button>
             <button id="openLogViewerButton" class="topbar-link-button ghost" type="button">
               Open Log Viewer
             </button>
@@ -109,6 +123,78 @@
               <span id="pressureTarget" class="metric-target">Target --</span>
               <span id="pressureOverviewState" class="status-badge neutral">--</span>
             </div>
+          </article>
+        </div>
+
+        <div class="overview-board">
+          <article class="surface-card overview-trend">
+            <div class="overview-widget-head">
+              <h3>Trend &middot; last 30 min</h3>
+              <div class="legend-static">
+                <span style="color:#fbbf24"><i></i>Sample</span>
+                <span style="color:#38bdf8"><i></i>VTI</span>
+                <span style="color:#34d399"><i></i>Magnet</span>
+              </div>
+            </div>
+            <canvas id="overviewTrendChart" width="900" height="232"></canvas>
+          </article>
+
+          <article class="surface-card overview-gauge" data-capability="field_control">
+            <div class="overview-widget-head">
+              <h3>Magnet Field</h3>
+              <span id="overviewSwitchBadge" class="badge neutral">Switch --</span>
+            </div>
+            <div class="gauge">
+              <div class="gauge-face"><div id="overviewFieldNeedle" class="needle"></div></div>
+              <strong id="overviewFieldGaugeValue">--</strong>
+            </div>
+            <dl class="dense-list">
+              <dt>Current</dt><dd id="overviewFieldCurrent">--</dd>
+              <dt>Voltage</dt><dd id="overviewFieldVoltage">--</dd>
+              <dt>Magnet T</dt><dd id="overviewMagnetTemp">--</dd>
+            </dl>
+          </article>
+
+          <article class="surface-card overview-gas" data-capability="gas_control">
+            <div class="overview-widget-head">
+              <h3>VTI Gas</h3>
+              <span id="overviewPressureMode" class="status-badge neutral">--</span>
+            </div>
+            <div class="bar-row">
+              <span>Needle</span>
+              <div class="bar"><div id="overviewNeedleBar"></div></div>
+              <strong id="overviewNeedleValue">--</strong>
+            </div>
+            <dl class="dense-list">
+              <dt>Pressure</dt><dd id="overviewPressureDetail">--</dd>
+              <dt>Target</dt><dd id="overviewPressureTargetDetail">--</dd>
+            </dl>
+          </article>
+
+          <article class="surface-card overview-loop" data-capability="sample_loop">
+            <div class="overview-widget-head">
+              <h3>Sample Loop</h3>
+              <span id="overviewSampleState" class="status-badge neutral">--</span>
+            </div>
+            <dl class="dense-list two-col">
+              <dt>Heater</dt><dd id="overviewSampleHeater">--</dd>
+              <dt>Rate</dt><dd id="overviewSampleRate">--</dd>
+              <dt>Mode</dt><dd id="overviewSampleMode">--</dd>
+              <dt>Target reached</dt><dd id="overviewSampleReached">--</dd>
+            </dl>
+          </article>
+
+          <article class="surface-card overview-loop" data-capability="vti_loop">
+            <div class="overview-widget-head">
+              <h3>VTI Loop</h3>
+              <span id="overviewVtiState" class="status-badge neutral">--</span>
+            </div>
+            <dl class="dense-list two-col">
+              <dt>Heater</dt><dd id="overviewVtiHeater">--</dd>
+              <dt>Rate</dt><dd id="overviewVtiRate">--</dd>
+              <dt>Mode</dt><dd id="overviewVtiMode">--</dd>
+              <dt>Target reached</dt><dd id="overviewVtiReached">--</dd>
+            </dl>
           </article>
         </div>
       </section>
