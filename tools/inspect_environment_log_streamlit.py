@@ -9,6 +9,7 @@ from typing import Iterable
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
@@ -391,6 +392,122 @@ def build_line_chart(
     )
     if show_events and events_df is not None:
         add_event_overlay(fig, df, time_col, events_df, series_map.keys())
+    return fig
+
+
+def build_overview_subplot(
+    df: pd.DataFrame,
+    time_col: str,
+    panels: list[tuple[dict[str, dict[str, str]], str, str]],
+    theme: str,
+    events_df: pd.DataFrame | None = None,
+    show_events: bool = True,
+) -> go.Figure:
+    """Create a single figure with shared x-axis so all panels zoom together.
+
+    panels is a list of (series_map, y_axis_title, panel_title) tuples.
+    """
+    theme_tokens = get_theme_tokens(theme)
+    n_rows = len(panels)
+
+    fig = make_subplots(
+        rows=n_rows,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.06,
+        subplot_titles=[p[2] for p in panels],
+    )
+
+    for row_idx, (series_map, _y_title, _panel_title) in enumerate(panels, start=1):
+        for key, props in series_map.items():
+            fig.add_trace(
+                go.Scatter(
+                    x=df[time_col],
+                    y=df[key],
+                    mode="lines",
+                    name=props["label"],
+                    line={"color": props["color"], "width": 2.2},
+                    hovertemplate="%{x}<br>%{y}<extra>" + props["label"] + "</extra>",
+                ),
+                row=row_idx, col=1,
+            )
+
+        if show_events and events_df is not None and not events_df.empty:
+            rail_y = event_rail_y(df, list(series_map.keys()))
+            fig.add_shape(
+                type="line",
+                x0=df[time_col].min(),
+                x1=df[time_col].max(),
+                y0=rail_y,
+                y1=rail_y,
+                line={"color": "rgba(220, 38, 38, 0.35)", "width": 2},
+                layer="below",
+                row=row_idx, col=1,
+            )
+            for category in EVENT_CATEGORY_ORDER:
+                cat_df = events_df[events_df["category"] == category]
+                if cat_df.empty:
+                    continue
+                color = EVENT_CATEGORY_COLORS.get(category, EVENT_CATEGORY_COLORS["Other"])
+                fig.add_trace(
+                    go.Scatter(
+                        x=cat_df["timestamp"],
+                        y=[rail_y] * len(cat_df),
+                        mode="markers",
+                        name=f"Event: {category}",
+                        marker={
+                            "color": color,
+                            "size": 9,
+                            "symbol": "diamond",
+                            "line": {"color": color, "width": 1},
+                        },
+                        customdata=cat_df[["category", "event"]],
+                        hovertemplate="%{x}<br><b>%{customdata[0]}</b><br>%{customdata[1]}<extra>Event</extra>",
+                        showlegend=(row_idx == 1),
+                        legendgroup=f"event_{category}",
+                    ),
+                    row=row_idx, col=1,
+                )
+
+    fig.update_layout(
+        hovermode="x unified",
+        height=max(320, 260 * n_rows),
+        margin={"l": 20, "r": 20, "t": 40, "b": 20},
+        template=theme_tokens["template"],
+        paper_bgcolor=theme_tokens["paper_bgcolor"],
+        plot_bgcolor=theme_tokens["plot_bgcolor"],
+        font={"color": theme_tokens["font_color"]},
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "x": 0,
+            "font": {"color": theme_tokens["font_color"]},
+        },
+    )
+
+    for row_idx, (_series_map, y_title, _panel_title) in enumerate(panels, start=1):
+        is_bottom = row_idx == n_rows
+        fig.update_xaxes(
+            showgrid=True,
+            gridcolor=theme_tokens["grid_color"],
+            linecolor=theme_tokens["axis_color"],
+            tickfont={"color": theme_tokens["font_color"]},
+            title_font={"color": theme_tokens["title_color"]},
+            title_text="Timestamp" if is_bottom else "",
+            showticklabels=is_bottom,
+            row=row_idx, col=1,
+        )
+        fig.update_yaxes(
+            title_text=y_title,
+            showgrid=True,
+            gridcolor=theme_tokens["grid_color"],
+            linecolor=theme_tokens["axis_color"],
+            tickfont={"color": theme_tokens["font_color"]},
+            title_font={"color": theme_tokens["title_color"]},
+            row=row_idx, col=1,
+        )
+
     return fig
 
 
@@ -780,60 +897,39 @@ def main() -> None:
     overview_tab, events_tab, raw_data_tab = st.tabs(["Overview", "Events", "Raw Data"])
 
     with overview_tab:
-        if show_event_markers and not events_df.empty:
-            st.caption("The lower rail marks reconstructed events by category color. Hover a marker to see what happened.")
-        elif show_event_markers and not selected_event_categories:
-            st.caption("Select at least one event category in the sidebar to show markers.")
+        panels: list[tuple[dict, str, str]] = []
         if selected_temperature:
-            st.plotly_chart(
-                build_line_chart(
-                    df,
-                    time_col,
-                    selected_temperature,
-                    "Temperatures",
-                    "Temperature (K)",
-                    selected_theme,
-                    events_df,
-                    show_event_markers,
-                ),
-                use_container_width=True,
-            )
-        else:
-            st.info("No temperature traces selected or available.")
-
+            panels.append((selected_temperature, "Temperature (K)", "Temperatures"))
         if selected_magnetics:
-            st.plotly_chart(
-                build_line_chart(
-                    df,
-                    time_col,
-                    selected_magnetics,
-                    "Magnetics",
-                    "Field / Current / Voltage",
-                    selected_theme,
-                    events_df,
-                    show_event_markers,
-                ),
-                use_container_width=True,
-            )
-        else:
-            st.info("No magnetic traces selected or available.")
-
+            panels.append((selected_magnetics, "Field / Current / Voltage", "Magnetics"))
         if selected_pressure:
+            panels.append((selected_pressure, "Pressure / Needle", "Pressure and Needle Valve"))
+
+        if panels:
+            if show_event_markers and not events_df.empty:
+                st.caption("The lower rail marks reconstructed events by category color. Hover a marker to see what happened.")
+            elif show_event_markers and not selected_event_categories:
+                st.caption("Select at least one event category in the sidebar to show markers.")
             st.plotly_chart(
-                build_line_chart(
+                build_overview_subplot(
                     df,
                     time_col,
-                    selected_pressure,
-                    "Pressure and Needle Valve",
-                    "Pressure / Needle",
+                    panels,
                     selected_theme,
                     events_df,
                     show_event_markers,
                 ),
                 use_container_width=True,
+                key="overview_chart",
             )
-        else:
+        if not selected_temperature:
+            st.info("No temperature traces selected or available.")
+        if not selected_magnetics:
+            st.info("No magnetic traces selected or available.")
+        if not selected_pressure:
             st.info("No pressure or needle-valve traces selected or available.")
+        if not panels:
+            st.info("No traces selected. Use the sidebar to select at least one series.")
 
     with events_tab:
         if events_df.empty:
