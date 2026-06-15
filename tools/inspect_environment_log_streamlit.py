@@ -219,6 +219,119 @@ def available_series(df: pd.DataFrame, series_map: dict[str, dict[str, str]]) ->
     return {key: props for key, props in series_map.items() if key in df.columns}
 
 
+def classify_event(description: str) -> str:
+    """Map an event description to a compact category label."""
+    lowered = description.lower()
+    if "safety" in lowered:
+        return "Safety"
+    if "field" in lowered or "switch heater" in lowered:
+        return "Field"
+    if "sample" in lowered:
+        return "Sample"
+    if "vti" in lowered:
+        return "VTI"
+    if "pressure" in lowered or "needle" in lowered:
+        return "Pressure"
+    if "mode" in lowered or "state" in lowered or "acquisition" in lowered:
+        return "State"
+    return "Other"
+
+
+EVENT_CATEGORY_COLORS: dict[str, str] = {
+    "Safety": "#dc2626",
+    "Field": "#16a34a",
+    "Sample": "#c2410c",
+    "VTI": "#2563eb",
+    "Pressure": "#7c3aed",
+    "State": "#475569",
+    "Other": "#a16207",
+}
+
+
+EVENT_CATEGORY_ORDER: list[str] = [
+    "Safety",
+    "Field",
+    "Sample",
+    "VTI",
+    "Pressure",
+    "State",
+    "Other",
+]
+
+
+def shorten_event_label(description: str, limit: int = 28) -> str:
+    """Create a short label for dense event markers."""
+    compact = " ".join(str(description).split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1].rstrip() + "..."
+
+
+def event_rail_y(df: pd.DataFrame, series_keys: Iterable[str]) -> float:
+    """Choose a visible y-position for the event rail near the lower plot edge."""
+    numeric_values: list[float] = []
+    for key in series_keys:
+        if key not in df.columns:
+            continue
+        series = pd.to_numeric(df[key], errors="coerce").dropna()
+        if not series.empty:
+            numeric_values.extend(series.tolist())
+
+    if not numeric_values:
+        return 0.0
+
+    min_y = min(numeric_values)
+    max_y = max(numeric_values)
+    span = max(max_y - min_y, 1e-9)
+    return min_y + span * 0.04
+
+
+def add_event_overlay(
+    fig: go.Figure,
+    df: pd.DataFrame,
+    time_col: str,
+    events_df: pd.DataFrame,
+    series_keys: Iterable[str],
+) -> None:
+    """Render a compact event rail inside the main plot area."""
+    if events_df.empty:
+        return
+
+    rail_y = event_rail_y(df, series_keys)
+    fig.add_shape(
+        type="line",
+        x0=df[time_col].min(),
+        x1=df[time_col].max(),
+        xref="x",
+        y0=rail_y,
+        y1=rail_y,
+        yref="y",
+        line={"color": "rgba(220, 38, 38, 0.35)", "width": 2},
+        layer="below",
+    )
+    ordered_categories = [category for category in EVENT_CATEGORY_ORDER if category in set(events_df["category"])]
+    for category in ordered_categories:
+        category_df = events_df[events_df["category"] == category]
+        color = EVENT_CATEGORY_COLORS.get(category, EVENT_CATEGORY_COLORS["Other"])
+        fig.add_trace(
+            go.Scatter(
+                x=category_df["timestamp"],
+                y=[rail_y] * len(category_df),
+                mode="markers",
+                name=f"Event: {category}",
+                marker={
+                    "color": color,
+                    "size": 9,
+                    "symbol": "diamond",
+                    "line": {"color": color, "width": 1},
+                },
+                customdata=category_df[["category", "event"]],
+                hovertemplate="%{x}<br><b>%{customdata[0]}</b><br>%{customdata[1]}<extra>Event</extra>",
+                showlegend=True,
+            )
+        )
+
+
 def build_line_chart(
     df: pd.DataFrame,
     time_col: str,
@@ -226,6 +339,8 @@ def build_line_chart(
     title: str,
     y_title: str,
     theme: str,
+    events_df: pd.DataFrame | None = None,
+    show_events: bool = True,
 ) -> go.Figure:
     """Create a Plotly line chart for the selected series."""
     theme_tokens = get_theme_tokens(theme)
@@ -274,12 +389,23 @@ def build_line_chart(
         tickfont={"color": theme_tokens["font_color"]},
         title_font={"color": theme_tokens["title_color"]},
     )
+    if show_events and events_df is not None:
+        add_event_overlay(fig, df, time_col, events_df, series_map.keys())
     return fig
 
 
 def to_event_frame(events: Iterable[tuple[pd.Timestamp, str]]) -> pd.DataFrame:
     """Convert reconstructed events into a table-friendly dataframe."""
-    rows = [{"timestamp": timestamp, "event": description} for timestamp, description in events]
+    rows = []
+    for timestamp, description in events:
+        rows.append(
+            {
+                "timestamp": timestamp,
+                "category": classify_event(description),
+                "label": shorten_event_label(description),
+                "event": description,
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -350,14 +476,17 @@ def discover_directory_files(directory: str, pattern: str) -> list[Path]:
     return sorted(path for path in base.glob(pattern) if path.is_file())
 
 
-def select_watch_files(paths: list[Path], selection_mode: str) -> list[Path]:
-    """Choose either all matched files or only the most recently updated one."""
+def newest_file(paths: list[Path]) -> Path | None:
+    """Return the most recently updated file from a list."""
     if not paths:
-        return []
-    if selection_mode == "Only latest file":
-        latest = max(paths, key=lambda path: (path.stat().st_mtime, path.name))
-        return [latest]
-    return paths
+        return None
+    return max(paths, key=lambda path: (path.stat().st_mtime, path.name))
+
+
+def select_files_by_name(paths: list[Path], selected_names: list[str]) -> list[Path]:
+    """Return files whose names are present in the current selection."""
+    selected_set = set(selected_names)
+    return [path for path in paths if path.name in selected_set]
 
 
 def render_auto_refresh(enabled: bool, interval_seconds: int) -> None:
@@ -377,38 +506,76 @@ def render_auto_refresh(enabled: bool, interval_seconds: int) -> None:
     )
 
 
+def init_session_value(key: str, value: object) -> None:
+    """Initialize a Streamlit session value only once."""
+    if key not in st.session_state:
+        st.session_state[key] = value
+
+
+def reset_ui_filters() -> None:
+    """Restore the sidebar controls to their default values."""
+    st.session_state["selected_theme"] = "Light"
+    st.session_state["source_mode"] = "Directory watch"
+    st.session_state["watch_directory"] = str((THIS_DIR.parent / "data").resolve())
+    st.session_state["watch_pattern"] = "cryostat_environment_*.csv"
+    st.session_state["watch_selected_files"] = []
+    st.session_state["watch_latest_only"] = False
+    st.session_state["auto_refresh_enabled"] = True
+    st.session_state["auto_refresh_seconds"] = 5
+    st.session_state["show_event_markers"] = True
+    st.session_state["selected_event_categories"] = list(EVENT_CATEGORY_ORDER)
+    st.session_state["selected_temperature_keys"] = []
+    st.session_state["selected_magnetics_keys"] = []
+    st.session_state["selected_pressure_keys"] = []
+    st.session_state["uploaded_selected_files"] = []
+
+
 def main() -> None:
+    init_session_value("selected_theme", "Light")
+    init_session_value("source_mode", "Directory watch")
+    init_session_value("watch_directory", str((THIS_DIR.parent / "data").resolve()))
+    init_session_value("watch_pattern", "cryostat_environment_*.csv")
+    init_session_value("watch_selected_files", [])
+    init_session_value("watch_latest_only", False)
+    init_session_value("auto_refresh_enabled", True)
+    init_session_value("auto_refresh_seconds", 5)
+    init_session_value("show_event_markers", True)
+    init_session_value("selected_event_categories", list(EVENT_CATEGORY_ORDER))
+    init_session_value("selected_temperature_keys", [])
+    init_session_value("selected_magnetics_keys", [])
+    init_session_value("selected_pressure_keys", [])
+    init_session_value("uploaded_selected_files", [])
+    init_session_value("reload_counter", 0)
+
     with st.sidebar:
         st.header("Display")
         selected_theme = st.radio(
             "Theme",
             options=["Light", "Dark"],
             horizontal=True,
+            key="selected_theme",
         )
         source_mode = st.radio(
             "Source",
             options=["Directory watch", "Manual upload"],
-            index=0,
+            key="source_mode",
         )
-        if "reload_counter" not in st.session_state:
-            st.session_state["reload_counter"] = 0
         auto_refresh_enabled = False
         auto_refresh_seconds = 5
         watch_directory = ""
         watch_pattern = "cryostat_environment_*.csv"
-        watch_selection_mode = "Merge all matched files"
 
         if source_mode == "Directory watch":
-            watch_directory = st.text_input("Log directory", value=str((THIS_DIR.parent / "data").resolve()))
-            watch_pattern = st.text_input("File pattern", value="cryostat_environment_*.csv")
-            watch_selection_mode = st.radio(
-                "Matched files",
-                options=["Merge all matched files", "Only latest file"],
-                index=0,
+            watch_directory = st.text_input("Log directory", key="watch_directory")
+            watch_pattern = st.text_input("File pattern", key="watch_pattern")
+            st.checkbox(
+                "Use newest file only",
+                key="watch_latest_only",
+                help="When enabled, the reader follows only the most recently updated matched file.",
             )
-            auto_refresh_enabled = st.checkbox("Auto refresh", value=True)
+            auto_refresh_enabled = st.checkbox("Auto refresh", key="auto_refresh_enabled")
             auto_refresh_seconds = int(
-                st.number_input("Refresh every (s)", min_value=1, max_value=300, value=5, step=1)
+                st.number_input("Refresh every (s)", min_value=1, max_value=300, step=1, key="auto_refresh_seconds")
             )
 
         reload_label = "Reload watched files" if source_mode == "Directory watch" else "Reload uploaded files"
@@ -416,6 +583,10 @@ def main() -> None:
             read_uploaded_logs.clear()
             read_directory_logs.clear()
             st.session_state["reload_counter"] += 1
+            st.rerun()
+
+        if st.button("Reset filters", use_container_width=True):
+            reset_ui_filters()
             st.rerun()
 
         st.header("Trace Selection")
@@ -430,7 +601,26 @@ def main() -> None:
     if source_mode == "Directory watch":
         try:
             matched_files = discover_directory_files(watch_directory, watch_pattern)
-            selected_watch_files = select_watch_files(matched_files, watch_selection_mode)
+            matched_names = [path.name for path in matched_files]
+            if st.session_state["watch_latest_only"]:
+                latest = newest_file(matched_files)
+                st.session_state["watch_selected_files"] = [latest.name] if latest is not None else []
+            else:
+                st.session_state["watch_selected_files"] = [
+                    name for name in st.session_state["watch_selected_files"] if name in matched_names
+                ]
+                if not st.session_state["watch_selected_files"] and matched_names:
+                    st.session_state["watch_selected_files"] = matched_names
+
+            st.sidebar.multiselect(
+                "Files to display",
+                options=matched_names,
+                key="watch_selected_files",
+                disabled=st.session_state["watch_latest_only"],
+                help="Choose the directory files to merge into the current view.",
+            )
+
+            selected_watch_files = select_files_by_name(matched_files, st.session_state["watch_selected_files"])
             file_sources = selected_watch_files
             file_paths = tuple(str(path) for path in selected_watch_files)
             df, time_col, filtered_rows_total = read_directory_logs(file_paths, st.session_state["reload_counter"])
@@ -444,20 +634,20 @@ def main() -> None:
             return
 
         st.caption(f"Watching `{watch_directory}` with pattern `{watch_pattern}`")
-        st.caption(
-            f"Mode: {watch_selection_mode}"
-            + (
-                f" ({selected_watch_files[0].name})"
-                if watch_selection_mode == "Only latest file" and selected_watch_files
-                else ""
-            )
-        )
+        if st.session_state["watch_latest_only"] and selected_watch_files:
+            st.caption(f"Mode: newest file only (`{selected_watch_files[0].name}`)")
+        else:
+            st.caption(f"Selected files: {len(selected_watch_files)} of {len(matched_files)}")
         if auto_refresh_enabled:
             st.caption(f"Auto refresh enabled: every {auto_refresh_seconds} s")
             render_auto_refresh(True, auto_refresh_seconds)
 
         if not matched_files:
             st.warning("No files matched the current directory/pattern selection.")
+            st.caption("CLI: `streamlit run inspect_environment_log_streamlit.py`")
+            return
+        if not selected_watch_files:
+            st.warning("Select at least one matched file to display.")
             st.caption("CLI: `streamlit run inspect_environment_log_streamlit.py`")
             return
     else:
@@ -473,9 +663,31 @@ def main() -> None:
             return
 
         try:
-            file_blobs = tuple((uploaded_file.name, uploaded_file.getvalue()) for uploaded_file in uploaded_files)
+            uploaded_names = [uploaded_file.name for uploaded_file in uploaded_files]
+            st.session_state["uploaded_selected_files"] = [
+                name for name in st.session_state["uploaded_selected_files"] if name in uploaded_names
+            ]
+            if not st.session_state["uploaded_selected_files"]:
+                st.session_state["uploaded_selected_files"] = uploaded_names
+
+            st.sidebar.multiselect(
+                "Uploaded files to display",
+                options=uploaded_names,
+                key="uploaded_selected_files",
+                help="Choose which uploaded CSV files to merge into the current view.",
+            )
+
+            selected_uploaded_files = [
+                uploaded_file for uploaded_file in uploaded_files if uploaded_file.name in st.session_state["uploaded_selected_files"]
+            ]
+            if not selected_uploaded_files:
+                st.warning("Select at least one uploaded file to display.")
+                st.caption("CLI: `streamlit run inspect_environment_log_streamlit.py`")
+                return
+
+            file_blobs = tuple((uploaded_file.name, uploaded_file.getvalue()) for uploaded_file in selected_uploaded_files)
             df, time_col, filtered_rows_total = read_uploaded_logs(file_blobs, st.session_state["reload_counter"])
-            file_sources = list(uploaded_files)
+            file_sources = list(selected_uploaded_files)
         except ValueError as exc:
             st.error(str(exc))
             st.caption("CLI: `streamlit run inspect_environment_log_streamlit.py`")
@@ -505,23 +717,52 @@ def main() -> None:
         temperature_series = available_series(df, TEMPERATURE_SERIES)
         magnetics_series = available_series(df, MAGNETICS_SERIES_LEFT)
         pressure_series = available_series(df, MAGNETICS_SERIES_RIGHT)
+        if not st.session_state["selected_temperature_keys"]:
+            st.session_state["selected_temperature_keys"] = list(temperature_series.keys())
+        else:
+            st.session_state["selected_temperature_keys"] = [
+                key for key in st.session_state["selected_temperature_keys"] if key in temperature_series
+            ]
+        if not st.session_state["selected_magnetics_keys"]:
+            st.session_state["selected_magnetics_keys"] = list(magnetics_series.keys())
+        else:
+            st.session_state["selected_magnetics_keys"] = [
+                key for key in st.session_state["selected_magnetics_keys"] if key in magnetics_series
+            ]
+        if not st.session_state["selected_pressure_keys"]:
+            st.session_state["selected_pressure_keys"] = list(pressure_series.keys())
+        else:
+            st.session_state["selected_pressure_keys"] = [
+                key for key in st.session_state["selected_pressure_keys"] if key in pressure_series
+            ]
+        st.session_state["selected_event_categories"] = [
+            key for key in st.session_state["selected_event_categories"] if key in EVENT_CATEGORY_ORDER
+        ] or list(EVENT_CATEGORY_ORDER)
+
+        show_event_markers = st.checkbox("Show event markers", key="show_event_markers")
+        event_category_options = list(EVENT_CATEGORY_ORDER)
+        selected_event_categories = st.multiselect(
+            "Event categories",
+            options=event_category_options,
+            key="selected_event_categories",
+        )
 
         selected_temperature_keys = st.multiselect(
             "Temperatures",
             options=list(temperature_series.keys()),
-            default=list(temperature_series.keys()),
+            key="selected_temperature_keys",
             format_func=lambda key: temperature_series[key]["label"],
         )
         selected_magnetics_keys = st.multiselect(
             "Magnetics",
             options=list(magnetics_series.keys()),
-            default=list(magnetics_series.keys()),
+            key="selected_magnetics_keys",
             format_func=lambda key: magnetics_series[key]["label"],
         )
         selected_pressure_keys = st.multiselect(
             "Pressure / Needle",
             options=list(pressure_series.keys()),
-            default=list(pressure_series.keys()),
+            key="selected_pressure_keys",
             format_func=lambda key: pressure_series[key]["label"],
         )
 
@@ -533,13 +774,28 @@ def main() -> None:
 
     events = build_event_list(df, time_col)
     events_df = to_event_frame(events)
+    if not events_df.empty:
+        events_df = events_df[events_df["category"].isin(selected_event_categories)].reset_index(drop=True)
 
     overview_tab, events_tab, raw_data_tab = st.tabs(["Overview", "Events", "Raw Data"])
 
     with overview_tab:
+        if show_event_markers and not events_df.empty:
+            st.caption("The lower rail marks reconstructed events by category color. Hover a marker to see what happened.")
+        elif show_event_markers and not selected_event_categories:
+            st.caption("Select at least one event category in the sidebar to show markers.")
         if selected_temperature:
             st.plotly_chart(
-                build_line_chart(df, time_col, selected_temperature, "Temperatures", "Temperature (K)", selected_theme),
+                build_line_chart(
+                    df,
+                    time_col,
+                    selected_temperature,
+                    "Temperatures",
+                    "Temperature (K)",
+                    selected_theme,
+                    events_df,
+                    show_event_markers,
+                ),
                 use_container_width=True,
             )
         else:
@@ -554,6 +810,8 @@ def main() -> None:
                     "Magnetics",
                     "Field / Current / Voltage",
                     selected_theme,
+                    events_df,
+                    show_event_markers,
                 ),
                 use_container_width=True,
             )
@@ -569,6 +827,8 @@ def main() -> None:
                     "Pressure and Needle Valve",
                     "Pressure / Needle",
                     selected_theme,
+                    events_df,
+                    show_event_markers,
                 ),
                 use_container_width=True,
             )
@@ -577,8 +837,12 @@ def main() -> None:
 
     with events_tab:
         if events_df.empty:
-            st.info("No reconstructable events found in the selected data.")
+            if selected_event_categories:
+                st.info("No reconstructable events found in the selected data for the active category filter.")
+            else:
+                st.info("Select at least one event category in the sidebar to list events.")
         else:
+            st.caption("Use `category` for quick scanning and `event` for the full reconstructed description.")
             st.dataframe(events_df, use_container_width=True, hide_index=True)
 
     with raw_data_tab:

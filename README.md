@@ -114,6 +114,12 @@ If you want a command that works from any folder, install it once:
 ./install-teslatron-command
 ```
 
+On Windows, the same result can be achieved with:
+
+```powershell
+python -m pip install --user -e .
+```
+
 After that, you can launch from any terminal with:
 
 ```bash
@@ -141,10 +147,38 @@ Useful variants:
 ./teslatron --open-browser
 ```
 
-If the project is installed as a package, the same launcher is also available as:
+If the project is installed as a package, the same launchers are also available as:
 
 ```bash
 teslatron
+teslatron readonly
+teslatron control
+teslatron heliox
+teslatron-log
+teslatron-stop
+teslatron-stop --include-log-viewer
+```
+
+Command summary:
+
+- `teslatron`: start the cryostat GUI with the default safe mock profile
+- `teslatron readonly`: start the lab read-only cryostat profile on `8765`
+- `teslatron control`: start the lab control-enabled cryostat profile on `8766`
+- `teslatron heliox`: start the Heliox local-GUI profile on `8767`
+- `teslatron-log`: start the Streamlit environment-log reader on `8501`
+- `teslatron-stop`: stop the Teslatron service ports `8765`, `8766`, `8767`, and `8775`
+- `teslatron-stop --include-log-viewer`: stop those ports and also the log reader on `8501`
+
+For `teslatron-log`, keep the terminal open while Streamlit is running, then open:
+
+```text
+http://127.0.0.1:8501/
+```
+
+Stop it with `Ctrl+C` in that same terminal, or with:
+
+```bash
+teslatron-stop --include-log-viewer
 ```
 
 ## Quick start

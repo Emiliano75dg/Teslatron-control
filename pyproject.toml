@@ -17,6 +17,8 @@ dependencies = [
 
 [project.scripts]
 teslatron = "teslatron_services.launcher:main"
+teslatron-log = "teslatron_services.log_viewer_launcher:main"
+teslatron-stop = "teslatron_services.stop_launcher:main"
 
 [project.optional-dependencies]
 dev = [
@@ -30,6 +32,9 @@ lab = [
   "pyvisa",
 ]
 analysis = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["teslatron_services"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
