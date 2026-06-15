@@ -471,7 +471,7 @@ def build_overview_subplot(
 
     fig.update_layout(
         hovermode="x unified",
-        height=max(320, 260 * n_rows),
+        height=max(640, 520 * n_rows),
         margin={"l": 20, "r": 20, "t": 40, "b": 20},
         template=theme_tokens["template"],
         paper_bgcolor=theme_tokens["paper_bgcolor"],
