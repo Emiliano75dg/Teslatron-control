@@ -133,6 +133,32 @@ Important for live VISA access:
 
 ## 6. First startup paths
 
+If you installed the project launcher for your user, the shortcut commands are:
+
+```bash
+teslatron
+teslatron readonly
+teslatron control
+teslatron heliox
+teslatron-log
+teslatron-stop
+teslatron-stop --include-log-viewer
+```
+
+Use these as convenience wrappers around the explicit Python commands below.
+
+For `teslatron-log`, keep the terminal open while the Streamlit server is
+running. The default local URL is:
+
+```text
+http://127.0.0.1:8501/
+```
+
+Alternatively, click **Open Log Viewer** in the GUI topbar. If Streamlit is
+not already running, the button starts it automatically and opens the tab
+after a brief boot delay. The cryostat service terminates the Streamlit
+process when it shuts down.
+
 ### A. Offline mock startup
 
 This is the recommended first run:
@@ -424,6 +450,9 @@ Electrical runs produce output under:
 data/electrical/YYYY-MM-DD/<run_id>/
 ```
 
+This path is always resolved relative to the repository root, regardless of
+which directory the service was launched from.
+
 Typical outputs include:
 
 - a JSONL event log
@@ -453,6 +482,15 @@ Check:
 
 Usually this means the loaded config is read-only. Confirm `GET /config` and
 check the `read_only` flag.
+
+### Data files not found after a measurement run
+
+If environment logs or electrical CSV files cannot be found under `data/`,
+the service was likely started from a directory other than the repository
+root. All services now call `os.chdir` to the repository root before
+starting, so paths such as `data/electrical` always resolve in the right
+place. If files are still missing, search for them relative to whatever
+directory was active when the service started.
 
 ### The service can read hardware sometimes but not reliably
 

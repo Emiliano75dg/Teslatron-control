@@ -1681,8 +1681,24 @@ function setupThemeToggle() {
 
 function bindCommands() {
   setupThemeToggle();
-  el("openLogViewerButton").addEventListener("click", () => {
-    window.open(LOG_VIEWER_URL, "_blank", "noopener,noreferrer");
+  el("openLogViewerButton").addEventListener("click", async () => {
+    const btn = el("openLogViewerButton");
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Starting…";
+    try {
+      const result = await postJson("/log-viewer/start");
+      if (!result.already_running) {
+        btn.textContent = "Opening…";
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+      }
+      window.open(result.url, "_blank", "noopener,noreferrer");
+    } catch {
+      window.open(LOG_VIEWER_URL, "_blank", "noopener,noreferrer");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
   });
   el("temperatureForm").addEventListener("submit", async (event) => {
     event.preventDefault();

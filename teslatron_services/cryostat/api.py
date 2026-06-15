@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import signal
+import socket
+import subprocess
+import sys
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -128,10 +132,14 @@ def create_app(
         service = CryostatService(service_config)
         await service.start()
         app.state.cryostat = service
+        app.state.log_viewer_proc = None
         try:
             yield
         finally:
             await service.stop()
+            proc = app.state.log_viewer_proc
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
 
     app = FastAPI(title="Teslatron Q-MAT Cryostat Service", lifespan=lifespan)
     app.add_exception_handler(ValueError, value_error_handler)
@@ -368,11 +376,36 @@ def create_app(
         except WebSocketDisconnect:
             current_service.unsubscribe(queue)
 
+    @app.post("/log-viewer/start")
+    async def start_log_viewer() -> dict:
+        url = "http://127.0.0.1:8501/"
+        already_running = await asyncio.to_thread(_is_port_open, "127.0.0.1", 8501)
+        if not already_running:
+            proc = app.state.log_viewer_proc
+            if proc is None or proc.poll() is not None:
+                streamlit_script = Path(__file__).resolve().parents[2] / "tools" / "inspect_environment_log_streamlit.py"
+                app.state.log_viewer_proc = subprocess.Popen(
+                    [
+                        sys.executable, "-m", "streamlit", "run", str(streamlit_script),
+                        "--server.address", "127.0.0.1",
+                        "--server.port", "8501",
+                        "--server.headless", "true",
+                    ],
+                    cwd=str(Path(__file__).resolve().parents[2]),
+                )
+        return {"url": url, "already_running": already_running}
+
     return app
 
 
 def _default_config_path() -> Path:
     return Path(__file__).resolve().parents[2] / "config" / "cryostat_lab_readonly.json"
+
+
+def _is_port_open(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex((host, port)) == 0
 
 
 app = create_app()

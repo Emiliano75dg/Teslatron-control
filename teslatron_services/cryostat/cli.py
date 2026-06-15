@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import os
+from pathlib import Path
 
 from .api import create_app
 from .config import load_config
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def main() -> None:
@@ -17,7 +21,11 @@ def main() -> None:
 
     import uvicorn
 
-    config = load_config(args.config)
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = REPO_ROOT / config_path
+    os.chdir(REPO_ROOT)
+    config = load_config(config_path)
     uvicorn.run(create_app(config), host=args.host, port=args.port)
 
 

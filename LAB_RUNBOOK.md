@@ -22,6 +22,24 @@ config/cryostat_lab_control.json
 
 ## 2. Start the service
 
+Installed launcher commands:
+
+```bash
+teslatron readonly
+teslatron control
+teslatron-log
+teslatron-stop
+teslatron-stop --include-log-viewer
+```
+
+When you use `teslatron-log`, keep that terminal open while the log reader is
+running. The default local URL is `http://127.0.0.1:8501/`.
+
+Alternatively, click **Open Log Viewer** in the GUI topbar. If Streamlit is
+not already running, the button starts it automatically.
+
+Equivalent explicit Python commands:
+
 Read-only:
 
 ```bash
@@ -60,6 +78,7 @@ Port convention used in this repository:
 - To stop the service cleanly, use one of these:
   - press `Ctrl+C` in the terminal that started `python3 -m teslatron_services ...`
   - click `Shutdown service` in the GUI Commands tab
+  - run `teslatron-stop` from any terminal
 - Both paths stop Uvicorn cleanly, run the FastAPI lifespan shutdown, call `CryostatService.stop()`,
   and close the active backend connection before the port is released.
 - To confirm the port is free after shutdown:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import webbrowser
 from pathlib import Path
@@ -78,6 +79,7 @@ def main() -> None:
         webbrowser.open(url)
 
     try:
+        os.chdir(REPO_ROOT)
         config = load_config(str(config_path))
         uvicorn.run(create_app(config), host=args.host, port=port)
     except KeyboardInterrupt:
