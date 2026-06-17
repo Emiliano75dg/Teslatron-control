@@ -6,6 +6,7 @@ the University of Naples Federico II.
 
 The current repository focuses on the service-oriented cryostat control layer,
 with:
+
 - real-time environmental readback
 - controlled temperature, field, and gas commands
 - diagnostics, GUI, and recipe support
@@ -14,6 +15,8 @@ with:
 
 If you are new to the repository, start here:
 
+- `docs/MANUALE_UTENTE.md`: complete Italian user manual — GUI walkthrough, recipe
+  builder, template buttons, workflows, safety rules, and troubleshooting
 - `docs/user_guide.md`: guided overview of the project, startup flows, configs,
   endpoints, output files, and common workflows
 - `LAB_RUNBOOK.md`: shortest safe procedure for live lab usage
@@ -24,9 +27,10 @@ If you are new to the repository, start here:
 Recommended reading order:
 
 1. `README.md`
-2. `docs/user_guide.md`
-3. `LAB_RUNBOOK.md` for real hardware sessions
-4. `SERVICE_ARCHITECTURE.md` only when you need implementation-level detail
+2. `docs/MANUALE_UTENTE.md` for a guided, step-by-step introduction in Italian
+3. `docs/user_guide.md` for a technical English overview
+4. `LAB_RUNBOOK.md` for real hardware sessions
+5. `SERVICE_ARCHITECTURE.md` only when you need implementation-level detail
 
 ## What is in this repository
 
@@ -360,6 +364,7 @@ python3 -m teslatron_services --config config/heliox_local_gui.example.json --po
 ```
 
 Current Heliox model:
+
 - sample temperature is controlled through the abstract `HelioxX:HEL` interface
 - VTI loop and gas control remain available through the underlying Mercury iTC channels
 - field control remains available through the system-global Mercury iPS
@@ -416,6 +421,7 @@ docs/electrical_measurements.md
 Current author and maintainer: Emiliano
 
 Instrument reference:
+
 - Teslatron system of the Q-MAT lab
 - CNR-SPIN
 - Department of Physics "E. Pancini"
