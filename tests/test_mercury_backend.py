@@ -48,6 +48,7 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
         backend._field_target_T = None
         backend._field_rate_T_per_min = None
         backend._field_requested_rate_T_per_min = None
+        backend._field_low_rate_window_T = 1.0
         backend._switch_heater_target = SwitchHeaterStatus.UNKNOWN
         backend._switch_heater_changed_at = None
         backend._mode = None
@@ -228,6 +229,24 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
         )
         self.assertEqual(backend._field_requested_rate_T_per_min, 0.3)
         self.assertEqual(backend._field_rate_T_per_min, 0.15)
+
+    def test_ramp_field_uses_custom_low_field_window(self) -> None:
+        backend = self.make_backend()
+        backend._ensure_switch_heater_ready_for_ramp = lambda: None
+        backend._read_ips_float = lambda command: 0.3 if command.endswith("SIG:FLD?") else None
+
+        backend.ramp_field(2.0, 0.3, low_field_window_T=0.2)
+
+        self.assertEqual(
+            backend.ips.commands,
+            [
+                "SET:DEV:GRPZ:PSU:ACTN:HOLD",
+                "SET:DEV:GRPZ:PSU:SIG:RFST:0.3",
+                "SET:DEV:GRPZ:PSU:SIG:FSET:2",
+                "SET:DEV:GRPZ:PSU:ACTN:RTOS",
+            ],
+        )
+        self.assertEqual(backend._field_low_rate_window_T, 0.2)
 
     def test_ramp_to_zero_requires_ready_switch_heater(self) -> None:
         backend = self.make_backend()

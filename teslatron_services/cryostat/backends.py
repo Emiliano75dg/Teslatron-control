@@ -63,11 +63,20 @@ class CryostatBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def ramp_field(self, target_T: float, rate_T_per_min: float) -> None:
+    def ramp_field(
+        self,
+        target_T: float,
+        rate_T_per_min: float,
+        low_field_window_T: float | None = None,
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def ramp_to_zero(self, rate_T_per_min: float) -> None:
+    def ramp_to_zero(
+        self,
+        rate_T_per_min: float,
+        low_field_window_T: float | None = None,
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -136,6 +145,7 @@ class MockCryostatBackend(CryostatBackend):
         self._target_field_T = 0.0
         self._field_rate_T_per_min = 0.2
         self._field_requested_rate_T_per_min = 0.2
+        self._field_low_rate_window_T = LOW_FIELD_RATE_WINDOW_T
         self._field_current_A = 0.0
         self._field_voltage_V = 0.0
         self._field_action = MagnetAction.HOLD
@@ -278,24 +288,37 @@ class MockCryostatBackend(CryostatBackend):
             self._vti_mode = TemperatureControlMode.FIXED_TARGET
         self._mode = CryostatMode.HOLDING
 
-    def ramp_field(self, target_T: float, rate_T_per_min: float) -> None:
+    def ramp_field(
+        self,
+        target_T: float,
+        rate_T_per_min: float,
+        low_field_window_T: float | None = None,
+    ) -> None:
         self._aborted = False
         self._target_field_T = target_T
         self._field_requested_rate_T_per_min = abs(rate_T_per_min)
+        self._field_low_rate_window_T = _field_rate_window_T(low_field_window_T)
         self._field_rate_T_per_min = _field_rate_with_low_field_cap(
             self._field_T,
             self._field_requested_rate_T_per_min,
+            low_field_window_T=self._field_low_rate_window_T,
         )
         self._field_action = MagnetAction.TO_SET
         self._mode = CryostatMode.RAMPING_B
 
-    def ramp_to_zero(self, rate_T_per_min: float) -> None:
+    def ramp_to_zero(
+        self,
+        rate_T_per_min: float,
+        low_field_window_T: float | None = None,
+    ) -> None:
         self._aborted = False
         self._target_field_T = 0.0
         self._field_requested_rate_T_per_min = abs(rate_T_per_min)
+        self._field_low_rate_window_T = _field_rate_window_T(low_field_window_T)
         self._field_rate_T_per_min = _field_rate_with_low_field_cap(
             self._field_T,
             self._field_requested_rate_T_per_min,
+            low_field_window_T=self._field_low_rate_window_T,
         )
         self._field_action = MagnetAction.TO_ZERO
         self._mode = CryostatMode.RAMPING_B
@@ -432,6 +455,7 @@ class MockCryostatBackend(CryostatBackend):
             _field_rate_with_low_field_cap(
                 self._field_T,
                 self._field_requested_rate_T_per_min,
+                low_field_window_T=self._field_low_rate_window_T,
             )
             / 60.0
             * dt,
@@ -439,6 +463,7 @@ class MockCryostatBackend(CryostatBackend):
         self._field_rate_T_per_min = _field_rate_with_low_field_cap(
             self._field_T,
             self._field_requested_rate_T_per_min,
+            low_field_window_T=self._field_low_rate_window_T,
         )
 
 
@@ -926,17 +951,25 @@ class _GlobalFieldControl:
             switch_heater_state=backend._switch_heater_state(switch_heater_status),
         )
 
-    def ramp(self, target_T: float, rate_T_per_min: float) -> None:
+    def ramp(
+        self,
+        target_T: float,
+        rate_T_per_min: float,
+        *,
+        low_field_window_T: float | None = None,
+    ) -> None:
         backend = self.backend
         backend._ensure_switch_heater_ready_for_ramp()
         backend._field_target_T = target_T
         backend._field_requested_rate_T_per_min = rate_T_per_min
+        backend._field_low_rate_window_T = _field_rate_window_T(low_field_window_T)
         group = backend.config.ips.magnet_group
         delay = backend.config.ips.command_delay_s
         current_field_T = backend._read_ips_float(f"READ:DEV:{group}:PSU:SIG:FLD?")
         effective_rate_T_per_min = _field_rate_with_low_field_cap(
             current_field_T,
             rate_T_per_min,
+            low_field_window_T=backend._field_low_rate_window_T,
         )
         backend._field_rate_T_per_min = effective_rate_T_per_min
         backend.ips.set(f"SET:DEV:{group}:PSU:ACTN:HOLD")
@@ -947,17 +980,24 @@ class _GlobalFieldControl:
         time.sleep(delay)
         backend.ips.set(f"SET:DEV:{group}:PSU:ACTN:RTOS")
 
-    def ramp_to_zero(self, rate_T_per_min: float) -> None:
+    def ramp_to_zero(
+        self,
+        rate_T_per_min: float,
+        *,
+        low_field_window_T: float | None = None,
+    ) -> None:
         backend = self.backend
         backend._ensure_switch_heater_ready_for_ramp()
         backend._field_target_T = 0.0
         backend._field_requested_rate_T_per_min = rate_T_per_min
+        backend._field_low_rate_window_T = _field_rate_window_T(low_field_window_T)
         group = backend.config.ips.magnet_group
         delay = backend.config.ips.command_delay_s
         current_field_T = backend._read_ips_float(f"READ:DEV:{group}:PSU:SIG:FLD?")
         effective_rate_T_per_min = _field_rate_with_low_field_cap(
             current_field_T,
             rate_T_per_min,
+            low_field_window_T=backend._field_low_rate_window_T,
         )
         backend._field_rate_T_per_min = effective_rate_T_per_min
         backend.ips.set(f"SET:DEV:{group}:PSU:ACTN:HOLD")
@@ -1102,6 +1142,7 @@ class MercuryCryostatBackend(CryostatBackend):
         self._field_target_T: float | None = None
         self._field_rate_T_per_min: float | None = None
         self._field_requested_rate_T_per_min: float | None = None
+        self._field_low_rate_window_T: float = LOW_FIELD_RATE_WINDOW_T
         self._switch_heater_target = SwitchHeaterStatus.UNKNOWN
         self._switch_heater_changed_at: float | None = None
         self._mode = CryostatMode.IDLE
@@ -1229,14 +1270,30 @@ class MercuryCryostatBackend(CryostatBackend):
             self._vti_control_component().set_temperature_target(vti_target)
         self._mode = CryostatMode.HOLDING
 
-    def ramp_field(self, target_T: float, rate_T_per_min: float) -> None:
+    def ramp_field(
+        self,
+        target_T: float,
+        rate_T_per_min: float,
+        low_field_window_T: float | None = None,
+    ) -> None:
         self._aborted = False
-        self._field_control_component().ramp(target_T, rate_T_per_min)
+        self._field_control_component().ramp(
+            target_T,
+            rate_T_per_min,
+            low_field_window_T=low_field_window_T,
+        )
         self._mode = CryostatMode.RAMPING_B
 
-    def ramp_to_zero(self, rate_T_per_min: float) -> None:
+    def ramp_to_zero(
+        self,
+        rate_T_per_min: float,
+        low_field_window_T: float | None = None,
+    ) -> None:
         self._aborted = False
-        self._field_control_component().ramp_to_zero(rate_T_per_min)
+        self._field_control_component().ramp_to_zero(
+            rate_T_per_min,
+            low_field_window_T=low_field_window_T,
+        )
         self._mode = CryostatMode.RAMPING_B
 
     def clamp(self) -> None:
@@ -1319,9 +1376,10 @@ class MercuryCryostatBackend(CryostatBackend):
                 "ramp_blocked_during_transition": True,
             },
             "field_rate_override": {
-                "window_min_T": -LOW_FIELD_RATE_WINDOW_T,
-                "window_max_T": LOW_FIELD_RATE_WINDOW_T,
+                "window_min_T": -getattr(self, "_field_low_rate_window_T", LOW_FIELD_RATE_WINDOW_T),
+                "window_max_T": getattr(self, "_field_low_rate_window_T", LOW_FIELD_RATE_WINDOW_T),
                 "max_rate_T_per_min": LOW_FIELD_RATE_LIMIT_T_PER_MIN,
+                "default_window_abs_T": LOW_FIELD_RATE_WINDOW_T,
             },
         }
 
@@ -1621,6 +1679,7 @@ class MercuryCryostatBackend(CryostatBackend):
         desired_rate_T_per_min = _field_rate_with_low_field_cap(
             field_T,
             self._field_requested_rate_T_per_min,
+            low_field_window_T=getattr(self, "_field_low_rate_window_T", LOW_FIELD_RATE_WINDOW_T),
         )
         if not field_ramping:
             self._field_rate_T_per_min = desired_rate_T_per_min
@@ -1957,10 +2016,18 @@ def _pressure_mode_from_loop_state(
 def _field_rate_with_low_field_cap(
     field_T: float | None,
     requested_rate_T_per_min: float,
+    *,
+    low_field_window_T: float | None = None,
 ) -> float:
-    if abs(field_T or 0.0) <= LOW_FIELD_RATE_WINDOW_T:
+    if abs(field_T or 0.0) <= _field_rate_window_T(low_field_window_T):
         return min(requested_rate_T_per_min, LOW_FIELD_RATE_LIMIT_T_PER_MIN)
     return requested_rate_T_per_min
+
+
+def _field_rate_window_T(low_field_window_T: float | None) -> float:
+    if low_field_window_T is None:
+        return LOW_FIELD_RATE_WINDOW_T
+    return max(0.0, float(low_field_window_T))
 
 
 def _temperature_targets_for_loop(

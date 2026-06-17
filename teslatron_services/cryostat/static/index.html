@@ -504,6 +504,9 @@
               <label>Rate T/min
                 <input name="rate_T_per_min" type="number" step="0.0001" value="0.1">
               </label>
+              <label>Low-field window T
+                <input name="low_field_window_T" type="number" step="0.0001" min="0" value="1.0">
+              </label>
               <button type="submit">Ramp B</button>
             </form>
             <div class="button-row action-row">
@@ -602,6 +605,9 @@
               </label>
               <label class="recipe-field-rate-input">Rate T/min
                 <input id="recipeRateT" type="number" step="0.0001" value="0.1">
+              </label>
+              <label class="recipe-field-rate-input">Low-field window T
+                <input id="recipeLowFieldWindowT" type="number" step="0.0001" min="0" value="1.0">
               </label>
               <label class="recipe-field-rate-input">B tolerance T
                 <input id="recipeToleranceT" type="number" step="0.0001" min="0" value="0.005">

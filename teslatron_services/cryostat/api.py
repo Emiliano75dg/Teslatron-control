@@ -32,10 +32,12 @@ class TargetTemperatureRequest(BaseModel):
 class RampFieldRequest(BaseModel):
     target_T: float
     rate_T_per_min: Annotated[float, Field(gt=0)]
+    low_field_window_T: Annotated[float | None, Field(ge=0)] = None
 
 
 class RampToZeroRequest(BaseModel):
     rate_T_per_min: Annotated[float, Field(gt=0)]
+    low_field_window_T: Annotated[float | None, Field(ge=0)] = None
 
 
 class NeedleValveRequest(BaseModel):
@@ -333,12 +335,14 @@ def create_app(
         return await service().ramp_field(
             request.target_T,
             request.rate_T_per_min,
+            low_field_window_T=request.low_field_window_T,
         )
 
     @app.post("/commands/ramp-to-zero")
     async def ramp_to_zero(request: RampToZeroRequest) -> dict:
         return await service().ramp_to_zero(
             request.rate_T_per_min,
+            low_field_window_T=request.low_field_window_T,
         )
 
     @app.post("/commands/clamp")

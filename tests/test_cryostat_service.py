@@ -46,11 +46,20 @@ class FakeBackend:
     def set_temperature_target(self, target_K: float, loop: str = "both") -> None:
         self.calls.append(("set_temperature_target", target_K, loop))
 
-    def ramp_field(self, target_T: float, rate_T_per_min: float) -> None:
-        self.calls.append(("ramp_field", target_T, rate_T_per_min))
+    def ramp_field(
+        self,
+        target_T: float,
+        rate_T_per_min: float,
+        low_field_window_T: float | None = None,
+    ) -> None:
+        self.calls.append(("ramp_field", target_T, rate_T_per_min, low_field_window_T))
 
-    def ramp_to_zero(self, rate_T_per_min: float) -> None:
-        self.calls.append(("ramp_to_zero", rate_T_per_min))
+    def ramp_to_zero(
+        self,
+        rate_T_per_min: float,
+        low_field_window_T: float | None = None,
+    ) -> None:
+        self.calls.append(("ramp_to_zero", rate_T_per_min, low_field_window_T))
 
     def clamp(self) -> None:
         self.calls.append(("clamp",))
@@ -105,12 +114,21 @@ class SlowBackend(FakeBackend):
         self.active_operations = 0
         self.max_active_operations = 0
 
-    def ramp_field(self, target_T: float, rate_T_per_min: float) -> None:
+    def ramp_field(
+        self,
+        target_T: float,
+        rate_T_per_min: float,
+        low_field_window_T: float | None = None,
+    ) -> None:
         self.active_operations += 1
         self.max_active_operations = max(self.max_active_operations, self.active_operations)
         try:
             time.sleep(0.02)
-            super().ramp_field(target_T, rate_T_per_min)
+            super().ramp_field(
+                target_T,
+                rate_T_per_min,
+                low_field_window_T=low_field_window_T,
+            )
         finally:
             self.active_operations -= 1
 
@@ -177,7 +195,22 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
 
         await service.ramp_field(1.0, 0.1)
 
-        self.assertEqual(service.backend.calls, [("ramp_field", 1.0, 0.1)])
+        self.assertEqual(service.backend.calls, [("ramp_field", 1.0, 0.1, None)])
+
+    async def test_field_command_accepts_custom_low_field_window(self) -> None:
+        service = self.make_service()
+
+        await service.ramp_field(1.0, 0.1, low_field_window_T=0.35)
+
+        self.assertEqual(service.backend.calls, [("ramp_field", 1.0, 0.1, 0.35)])
+
+    async def test_field_command_rejects_negative_low_field_window(self) -> None:
+        service = self.make_service()
+
+        with self.assertRaises(ValueError):
+            await service.ramp_field(1.0, 0.1, low_field_window_T=-0.1)
+
+        self.assertEqual(service.backend.calls, [])
 
     async def test_hardware_commands_are_serialized(self) -> None:
         backend = SlowBackend()
@@ -193,8 +226,8 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             backend.calls,
             [
-                ("ramp_field", 1.0, 0.1),
-                ("ramp_field", 2.0, 0.1),
+                ("ramp_field", 1.0, 0.1, None),
+                ("ramp_field", 2.0, 0.1, None),
             ],
         )
 
@@ -244,6 +277,7 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
                         "type": "ramp_field",
                         "target_T": 0.0,
                         "rate_T_per_min": 0.1,
+                        "low_field_window_T": 0.25,
                     },
                 ],
             }
@@ -257,7 +291,7 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
             service.backend.calls,
             [
                 ("ramp_temperature", 295.0, 0.5, "sample"),
-                ("ramp_field", 0.0, 0.1),
+                ("ramp_field", 0.0, 0.1, 0.25),
             ],
         )
 
@@ -294,7 +328,7 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
         await service._recipe_task
 
         self.assertEqual(service.recipe_status()["status"], "completed")
-        self.assertEqual(service.backend.calls, [("ramp_field", 0.0, 0.1)])
+        self.assertEqual(service.backend.calls, [("ramp_field", 0.0, 0.1, None)])
 
     async def test_external_measurement_point_waits_for_completion_signal(self) -> None:
         service = self.make_service()
@@ -335,7 +369,7 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
         await service._recipe_task
 
         self.assertEqual(service.recipe_status()["status"], "completed")
-        self.assertEqual(service.backend.calls, [("ramp_field", 0.0, 0.1)])
+        self.assertEqual(service.backend.calls, [("ramp_field", 0.0, 0.1, None)])
 
     async def test_external_measurement_start_waits_for_started_then_advances_to_ramp(self) -> None:
         service = self.make_service()
@@ -628,6 +662,25 @@ class CryostatApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["field_T"], 0.0)
         self.assertTrue(response.json()["safe_to_measure"])
         self.assertEqual(backend.read_state_calls, 1)
+
+    async def test_ramp_field_endpoint_accepts_custom_low_field_window(self) -> None:
+        backend = FakeBackend()
+        service = CryostatService(CryostatServiceConfig(backend="mock"), backend=backend)
+        app = self._app_for_service(service)
+        transport = httpx.ASGITransport(app=app)
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/commands/ramp-field",
+                json={
+                    "target_T": 1.2,
+                    "rate_T_per_min": 0.1,
+                    "low_field_window_T": 0.4,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(backend.calls, [("ramp_field", 1.2, 0.1, 0.4)])
 
     async def test_measurement_context_returns_null_for_missing_values(self) -> None:
         service = CryostatService(

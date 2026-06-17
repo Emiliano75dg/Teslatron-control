@@ -109,20 +109,38 @@ class CryostatService:
             lambda: self.backend.set_temperature_target(target_K, loop=loop)
         )
 
-    async def ramp_field(self, target_T: float, rate_T_per_min: float) -> dict[str, Any]:
+    async def ramp_field(
+        self,
+        target_T: float,
+        rate_T_per_min: float,
+        low_field_window_T: float | None = None,
+    ) -> dict[str, Any]:
         self._ensure_writable()
         self._ensure_field_supported()
         self._validate_field(target_T, rate_T_per_min)
+        self._validate_low_field_window(low_field_window_T)
         return await self._run_hardware_transaction(
-            lambda: self.backend.ramp_field(target_T, rate_T_per_min)
+            lambda: self.backend.ramp_field(
+                target_T,
+                rate_T_per_min,
+                low_field_window_T=low_field_window_T,
+            )
         )
 
-    async def ramp_to_zero(self, rate_T_per_min: float) -> dict[str, Any]:
+    async def ramp_to_zero(
+        self,
+        rate_T_per_min: float,
+        low_field_window_T: float | None = None,
+    ) -> dict[str, Any]:
         self._ensure_writable()
         self._ensure_field_supported()
         self._validate_field(0.0, rate_T_per_min)
+        self._validate_low_field_window(low_field_window_T)
         return await self._run_hardware_transaction(
-            lambda: self.backend.ramp_to_zero(rate_T_per_min)
+            lambda: self.backend.ramp_to_zero(
+                rate_T_per_min,
+                low_field_window_T=low_field_window_T,
+            )
         )
 
     async def clamp(self) -> dict[str, Any]:
@@ -467,10 +485,17 @@ class CryostatService:
                 loop=step.get("loop", "both"),
             )
         elif step_type == "ramp_field":
-            await self.ramp_field(step["target_T"], step["rate_T_per_min"])
+            await self.ramp_field(
+                step["target_T"],
+                step["rate_T_per_min"],
+                low_field_window_T=step.get("low_field_window_T"),
+            )
             await self._wait_for_field_step(step["target_T"], step)
         elif step_type == "ramp_to_zero":
-            await self.ramp_to_zero(step["rate_T_per_min"])
+            await self.ramp_to_zero(
+                step["rate_T_per_min"],
+                low_field_window_T=step.get("low_field_window_T"),
+            )
             await self._wait_for_field_step(0.0, step)
         elif step_type == "wait":
             await asyncio.sleep(step["duration_s"])
@@ -597,11 +622,14 @@ class CryostatService:
             self._ensure_field_supported()
             target_T = _required_float(step, "target_T")
             rate_T_per_min = _required_float(step, "rate_T_per_min")
+            low_field_window_T = _optional_float(step, "low_field_window_T", None)
             self._validate_field(target_T, rate_T_per_min)
+            self._validate_low_field_window(low_field_window_T)
             return {
                 "type": step_type,
                 "target_T": target_T,
                 "rate_T_per_min": rate_T_per_min,
+                "low_field_window_T": low_field_window_T,
                 "tolerance_T": _optional_float(step, "tolerance_T", 0.005),
                 "stable_s": _optional_float(step, "stable_s", 0.0),
                 "timeout_s": _optional_float(step, "timeout_s", 24 * 60 * 60),
@@ -609,10 +637,13 @@ class CryostatService:
         if step_type == "ramp_to_zero":
             self._ensure_field_supported()
             rate_T_per_min = _required_float(step, "rate_T_per_min")
+            low_field_window_T = _optional_float(step, "low_field_window_T", None)
             self._validate_field(0.0, rate_T_per_min)
+            self._validate_low_field_window(low_field_window_T)
             return {
                 "type": step_type,
                 "rate_T_per_min": rate_T_per_min,
+                "low_field_window_T": low_field_window_T,
                 "tolerance_T": _optional_float(step, "tolerance_T", 0.005),
                 "stable_s": _optional_float(step, "stable_s", 0.0),
                 "timeout_s": _optional_float(step, "timeout_s", 24 * 60 * 60),
@@ -913,6 +944,12 @@ class CryostatService:
             raise ValueError(f"Field target out of range: {target_T} T")
         if rate_T_per_min <= 0 or rate_T_per_min > safety.max_field_rate_T_per_min:
             raise ValueError(f"Field rate out of range: {rate_T_per_min} T/min")
+
+    def _validate_low_field_window(self, low_field_window_T: float | None) -> None:
+        if low_field_window_T is not None and low_field_window_T < 0:
+            raise ValueError(
+                f"Low-field rate window out of range: {low_field_window_T} T"
+            )
 
     def _validate_needle_valve(self, needle_valve_percent: float) -> None:
         if not 0.0 <= needle_valve_percent <= 100.0:

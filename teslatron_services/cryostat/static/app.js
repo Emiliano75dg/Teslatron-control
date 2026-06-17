@@ -44,6 +44,13 @@ const PLOT_SERIES_GROUPS = {
   magnetics: MAGNETICS_SERIES,
 };
 
+function optionalNumber(value) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return null;
+  }
+  return Number(value);
+}
+
 function formatNumber(value, digits = 3) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) {
     return "--";
@@ -1384,6 +1391,7 @@ function currentRecipeStepFromForm() {
       type,
       target_T: Number(el("recipeTargetT").value),
       rate_T_per_min: Number(el("recipeRateT").value),
+      low_field_window_T: optionalNumber(el("recipeLowFieldWindowT").value),
       tolerance_T: Number(el("recipeToleranceT").value),
       stable_s: Number(el("recipeStableS").value),
     };
@@ -1392,6 +1400,7 @@ function currentRecipeStepFromForm() {
     return {
       type,
       rate_T_per_min: Number(el("recipeRateT").value),
+      low_field_window_T: optionalNumber(el("recipeLowFieldWindowT").value),
       tolerance_T: Number(el("recipeToleranceT").value),
       stable_s: Number(el("recipeStableS").value),
     };
@@ -1458,10 +1467,10 @@ function recipeStepSummary(step) {
     return `Set ${step.loop} target ${formatNumber(step.target_K, 3)} K`;
   }
   if (step.type === "ramp_field") {
-    return `Ramp B to ${formatNumber(step.target_T, 4)} T at ${formatNumber(step.rate_T_per_min, 4)} T/min, wait IPS`;
+    return `Ramp B to ${formatNumber(step.target_T, 4)} T at ${formatNumber(step.rate_T_per_min, 4)} T/min (low-field window ${formatNumber(step.low_field_window_T ?? 1, 4)} T), wait IPS`;
   }
   if (step.type === "ramp_to_zero") {
-    return `Ramp B to zero at ${formatNumber(step.rate_T_per_min, 4)} T/min, wait IPS`;
+    return `Ramp B to zero at ${formatNumber(step.rate_T_per_min, 4)} T/min (low-field window ${formatNumber(step.low_field_window_T ?? 1, 4)} T), wait IPS`;
   }
   if (step.type === "wait") {
     return `Wait ${formatNumber(step.duration_s, 0)} s`;
@@ -1757,6 +1766,7 @@ function bindCommands() {
     await runCommand(() => postJson("/commands/ramp-field", {
       target_T: Number(form.get("target_T")),
       rate_T_per_min: Number(form.get("rate_T_per_min")),
+      low_field_window_T: optionalNumber(form.get("low_field_window_T")),
     }), "Field ramp");
   });
 
@@ -1768,9 +1778,12 @@ function bindCommands() {
   });
 
   el("toZeroButton").addEventListener("click", () => {
-    const rate = Number(new FormData(el("fieldForm")).get("rate_T_per_min"));
+    const form = new FormData(el("fieldForm"));
+    const rate = Number(form.get("rate_T_per_min"));
+    const lowFieldWindowT = optionalNumber(form.get("low_field_window_T"));
     return runCommand(() => postJson("/commands/ramp-to-zero", {
       rate_T_per_min: rate,
+      low_field_window_T: lowFieldWindowT,
     }), "To zero");
   });
   el("holdButton").addEventListener("click", () => runCommand(() => postJson("/commands/hold"), "Hold"));
