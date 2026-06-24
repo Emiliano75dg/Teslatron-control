@@ -1,4 +1,7 @@
 import asyncio
+import json
+import re
+import subprocess
 import tempfile
 import time
 import unittest
@@ -644,6 +647,51 @@ class CryostatApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(state.status_code, 200)
                 self.assertEqual(recipes.status_code, 200)
                 self.assertEqual(recipes.json()["recipes"][0]["name"], "api recipe")
+
+    async def test_static_app_js_normalizes_comma_decimal_input(self) -> None:
+        static_app_js = (
+            Path(__file__).resolve().parents[1]
+            / "teslatron_services"
+            / "cryostat"
+            / "static"
+            / "app.js"
+        )
+
+        self.assertIn('replace(",", ".")', static_app_js.read_text())
+
+    async def test_optional_number_accepts_comma_decimal_values(self) -> None:
+        static_app_js = (
+            Path(__file__).resolve().parents[1]
+            / "teslatron_services"
+            / "cryostat"
+            / "static"
+            / "app.js"
+        )
+        source = static_app_js.read_text()
+        match = re.search(
+            r"function optionalNumber\(value\) \{.*?\n\}",
+            source,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+
+        script = (
+            f"{match.group(0)}\n"
+            "console.log(JSON.stringify([\n"
+            "  optionalNumber('2,0'),\n"
+            "  optionalNumber('2.0'),\n"
+            "  optionalNumber(''),\n"
+            "  optionalNumber(null),\n"
+            "]));\n"
+        )
+        result = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        self.assertEqual(json.loads(result.stdout), [2, 2, None, None])
 
     async def test_measurement_context_returns_cached_values_without_hardware_poll(self) -> None:
         backend = CountingBackend()

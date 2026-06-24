@@ -48,7 +48,8 @@ function optionalNumber(value) {
   if (value === null || value === undefined || String(value).trim() === "") {
     return null;
   }
-  return Number(value);
+  const normalized = String(value).trim().replace(",", ".");
+  return Number(normalized);
 }
 
 function formatNumber(value, digits = 3) {
