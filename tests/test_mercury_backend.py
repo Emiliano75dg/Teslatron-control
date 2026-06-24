@@ -248,6 +248,32 @@ class MercuryBackendBehaviorTests(unittest.TestCase):
         )
         self.assertEqual(backend._field_low_rate_window_T, 0.2)
 
+    def test_hold_field_only_sends_magnet_hold(self) -> None:
+        backend = self.make_backend()
+
+        backend.hold_field()
+
+        self.assertEqual(
+            backend.ips.commands,
+            ["SET:DEV:GRPZ:PSU:ACTN:HOLD"],
+        )
+
+    def test_hold_temperature_sample_only_does_not_touch_vti_or_field(self) -> None:
+        backend = self.make_backend()
+        backend._read_itc_float = lambda command: 4.2
+
+        backend.hold_temperature(loop="sample")
+
+        self.assertEqual(
+            backend.itc.commands,
+            [
+                "SET:DEV:DB8.T1:TEMP:LOOP:RENA:OFF",
+                "SET:DEV:DB8.T1:TEMP:LOOP:TSET:4.2",
+                "SET:DEV:DB8.T1:TEMP:LOOP:ENAB:ON",
+            ],
+        )
+        self.assertEqual(backend.ips.commands, [])
+
     def test_ramp_to_zero_requires_ready_switch_heater(self) -> None:
         backend = self.make_backend()
         backend._ensure_switch_heater_ready_for_ramp = lambda: (_ for _ in ()).throw(

@@ -152,6 +152,19 @@ class CryostatService:
         self._ensure_writable()
         return await self._run_hardware_transaction(self.backend.hold)
 
+    async def hold_temperature(self, loop: str = "both") -> dict[str, Any]:
+        self._ensure_writable()
+        self._validate_temperature_loop(loop)
+        self._ensure_temperature_supported(loop)
+        return await self._run_hardware_transaction(
+            lambda: self.backend.hold_temperature(loop)
+        )
+
+    async def hold_field(self) -> dict[str, Any]:
+        self._ensure_writable()
+        self._ensure_field_supported()
+        return await self._run_hardware_transaction(self.backend.hold_field)
+
     async def abort(self) -> dict[str, Any]:
         self._ensure_writable()
         return await self._run_hardware_transaction(self.backend.abort)

@@ -1750,6 +1750,12 @@ function bindCommands() {
     }), `PID ${loop}`);
   });
 
+  el("temperatureHoldButton").addEventListener("click", async () => {
+    const form = new FormData(el("temperatureForm"));
+    const loop = form.get("loop");
+    await runCommand(() => postJson(`/commands/temperature/${loop}/hold`), `Temperature hold ${loop}`);
+  });
+
   el("gasForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -1787,7 +1793,7 @@ function bindCommands() {
       low_field_window_T: lowFieldWindowT,
     }), "To zero");
   });
-  el("holdButton").addEventListener("click", () => runCommand(() => postJson("/commands/hold"), "Hold"));
+  el("fieldHoldButton").addEventListener("click", () => runCommand(() => postJson("/commands/field/hold"), "Field hold"));
   el("clampButton").addEventListener("click", () => runConfirmedCommand(
     () => postJson("/commands/clamp"),
     "Clamp",

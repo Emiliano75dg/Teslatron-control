@@ -88,6 +88,14 @@ class CryostatBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def hold_temperature(self, loop: str = "both") -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def hold_field(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def abort(self) -> None:
         raise NotImplementedError
 
@@ -333,11 +341,23 @@ class MockCryostatBackend(CryostatBackend):
 
     def hold(self) -> None:
         self._advance()
-        self._sample_target_K = self._sample_temperature_K
-        self._vti_target_K = self._vti_temperature_K
+        self.hold_temperature(loop="both")
+        self.hold_field()
+        self._mode = CryostatMode.HOLDING
+
+    def hold_temperature(self, loop: str = "both") -> None:
+        self._advance()
+        if loop in {"sample", "both"}:
+            self._sample_target_K = self._sample_temperature_K
+            self._sample_mode = TemperatureControlMode.FIXED_TARGET
+        if loop in {"vti", "both"}:
+            self._vti_target_K = self._vti_temperature_K
+            self._vti_mode = TemperatureControlMode.FIXED_TARGET
+        self._mode = CryostatMode.HOLDING
+
+    def hold_field(self) -> None:
+        self._advance()
         self._target_field_T = self._field_T
-        self._sample_mode = TemperatureControlMode.FIXED_TARGET
-        self._vti_mode = TemperatureControlMode.FIXED_TARGET
         self._field_action = MagnetAction.HOLD
         self._mode = CryostatMode.HOLDING
 
@@ -1302,8 +1322,20 @@ class MercuryCryostatBackend(CryostatBackend):
         self._mode = CryostatMode.HOLDING
 
     def hold(self) -> None:
-        self._sample_control_component().hold()
-        self._vti_control_component().hold()
+        self.hold_temperature(loop="both")
+        self.hold_field()
+        self._mode = CryostatMode.HOLDING
+
+    def hold_temperature(self, loop: str = "both") -> None:
+        self._aborted = False
+        if loop in {"sample", "both"}:
+            self._sample_control_component().hold()
+        if loop in {"vti", "both"}:
+            self._vti_control_component().hold()
+        self._mode = CryostatMode.HOLDING
+
+    def hold_field(self) -> None:
+        self._aborted = False
         self._field_control_component().hold()
         self._mode = CryostatMode.HOLDING
 

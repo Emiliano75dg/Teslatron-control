@@ -399,7 +399,7 @@
             <p>Set targets, ramps, heater mode and PID terms.</p>
           </div>
           <div class="control-stack">
-            <form id="temperatureForm" class="command-form">
+            <form id="temperatureForm" class="command-form dual-action-form">
               <label>Loop
                 <select name="loop">
                   <option value="sample">Sample</option>
@@ -413,7 +413,10 @@
               <label>Rate K/min
                 <input name="rate_K_per_min" type="number" step="0.001" value="1">
               </label>
-              <button type="submit">Ramp T</button>
+              <div class="stacked-form-actions">
+                <button type="submit">Ramp T</button>
+                <button id="temperatureHoldButton" class="ghost" type="button">Hold T</button>
+              </div>
             </form>
             <form id="targetTemperatureForm" class="command-form">
               <label>Loop
@@ -513,7 +516,7 @@
               <span id="switchHeaterCommandBadge" class="badge neutral">Switch --</span>
               <button id="switchHeaterButton" class="ghost emphasis-button" type="button" data-command-control>Switch Heater</button>
               <button id="toZeroButton" type="button">To Zero</button>
-              <button id="holdButton" class="ghost" type="button">Hold</button>
+              <button id="fieldHoldButton" class="ghost" type="button">Hold B</button>
               <button id="clampButton" class="warn-button" type="button">Clamp</button>
               <button id="abortButton" class="danger" type="button">Abort</button>
             </div>

@@ -885,9 +885,23 @@ canvas {
   background: var(--color-surface-dark-2);
 }
 
+.command-form.dual-action-form {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(136px, auto);
+}
+
 .command-form.pid-form {
   grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(140px, 0.9fr) minmax(110px, auto);
   align-items: center;
+}
+
+.stacked-form-actions {
+  display: grid;
+  gap: calc(var(--space-3) + 2px);
+  align-self: stretch;
+}
+
+.stacked-form-actions button {
+  width: 100%;
 }
 
 .command-form.pid-form .checkbox-label {

@@ -234,7 +234,7 @@ For real-hardware sessions, the short version is:
 - verify readback before sending any command
 - do not keep LabVIEW and Python connected to the same Mercury session at the same time
 - test small ramps before large ones
-- use `Hold` if behavior looks wrong
+- use `Hold B` or `Hold T` if behavior looks wrong
 
 The full live workflow is documented in `LAB_RUNBOOK.md`.
 
@@ -353,7 +353,8 @@ Common write endpoints include:
 - `POST /commands/ramp-field`
 - `POST /commands/ramp-to-zero`
 - `POST /commands/clamp`
-- `POST /commands/hold`
+- `POST /commands/field/hold`
+- `POST /commands/temperature/{loop}/hold`
 - `POST /commands/abort`
 - `POST /commands/vti/gas/set-needle`
 - `POST /commands/vti/gas/set-pressure`
@@ -402,7 +403,7 @@ Use this when you intend to send commands:
 
 1. confirm the read-only path works first
 2. switch to `config/cryostat_lab_control.json`
-3. test `Hold`
+3. test `Hold B` and `Hold T`
 4. test a small temperature ramp
 5. test a small field ramp
 

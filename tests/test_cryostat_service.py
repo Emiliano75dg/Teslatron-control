@@ -70,6 +70,12 @@ class FakeBackend:
     def hold(self) -> None:
         self.calls.append(("hold",))
 
+    def hold_temperature(self, loop: str = "both") -> None:
+        self.calls.append(("hold_temperature", loop))
+
+    def hold_field(self) -> None:
+        self.calls.append(("hold_field",))
+
     def abort(self) -> None:
         self.calls.append(("abort",))
 
@@ -206,6 +212,22 @@ class CryostatServiceCapabilityTests(unittest.IsolatedAsyncioTestCase):
         await service.ramp_field(1.0, 0.1, low_field_window_T=0.35)
 
         self.assertEqual(service.backend.calls, [("ramp_field", 1.0, 0.1, 0.35)])
+
+    async def test_hold_field_respects_field_capability(self) -> None:
+        service = self.make_service(capabilities=InsertCapabilitiesConfig(field_control=False))
+
+        with self.assertRaises(PermissionError):
+            await service.hold_field()
+
+        self.assertEqual(service.backend.calls, [])
+
+    async def test_hold_temperature_respects_temperature_capability(self) -> None:
+        service = self.make_service(capabilities=InsertCapabilitiesConfig(temperature_control=False))
+
+        with self.assertRaises(PermissionError):
+            await service.hold_temperature(loop="both")
+
+        self.assertEqual(service.backend.calls, [])
 
     async def test_field_command_rejects_negative_low_field_window(self) -> None:
         service = self.make_service()
@@ -729,6 +751,30 @@ class CryostatApiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(backend.calls, [("ramp_field", 1.2, 0.1, 0.4)])
+
+    async def test_hold_field_endpoint_routes_to_backend(self) -> None:
+        backend = FakeBackend()
+        service = CryostatService(CryostatServiceConfig(backend="mock"), backend=backend)
+        app = self._app_for_service(service)
+        transport = httpx.ASGITransport(app=app)
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post("/commands/field/hold")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(backend.calls, [("hold_field",)])
+
+    async def test_hold_temperature_endpoint_routes_to_backend(self) -> None:
+        backend = FakeBackend()
+        service = CryostatService(CryostatServiceConfig(backend="mock"), backend=backend)
+        app = self._app_for_service(service)
+        transport = httpx.ASGITransport(app=app)
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post("/commands/temperature/both/hold")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(backend.calls, [("hold_temperature", "both")])
 
     async def test_measurement_context_returns_null_for_missing_values(self) -> None:
         service = CryostatService(

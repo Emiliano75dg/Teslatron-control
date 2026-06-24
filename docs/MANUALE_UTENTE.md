@@ -231,10 +231,12 @@ Imposta una rampa di campo magnetico:
 
 Porta il campo a zero in modo sicuro alla velocità impostata.
 
-### Hold
+### Hold B / Hold T
 
-Mette il sistema in modalità "Hold": interrompe qualsiasi rampa in corso e
-mantiene il valore attuale. Usalo se qualcosa sembra anomalo.
+`Hold B` interrompe la rampa di campo e mantiene il campo attuale.
+
+`Hold T` interrompe la rampa di temperatura del loop selezionato e mantiene il
+setpoint attuale.
 
 ### Abort
 
@@ -454,7 +456,7 @@ corrente appare nella scheda a destra:
 | Bottone | Quando usarlo |
 |---------|---------------|
 | **Continue** | Quando la ricetta è in pausa su uno step `Wait signal` o `external_measurement` e vuoi farla procedere manualmente (senza aspettare LabVIEW) |
-| **Abort Recipe** | Per fermare la ricetta immediatamente. Il sistema torna in IDLE ma **non** annulla la rampa eventualmente in corso: usa il pulsante Hold nel tab Commands se necessario |
+| **Abort Recipe** | Per fermare la ricetta immediatamente. Il sistema torna in IDLE ma **non** annulla automaticamente la rampa eventualmente in corso: usa `Hold B` o `Hold T` nel tab Commands se necessario |
 
 #### 6. Fine ricetta
 
@@ -610,7 +612,7 @@ Prima di testare una rampa grande, testa con un delta piccolo (es. ±1 K, ±0.1 
 
 ### Regola 4 — Hold se qualcosa è anomalo
 
-Se i valori sembrano sbagliati, usa subito **Hold** nel tab Commands. Poi
+Se i valori sembrano sbagliati, usa subito **Hold B** o **Hold T** nel tab Commands. Poi
 analizza la situazione.
 
 ### Regola 5 — Non chiudere il terminale senza fermare il servizio
@@ -664,7 +666,7 @@ Usa `teslatron-stop` per liberare le porte, poi riavvia.
 | **IPS** | Mercury iPS — alimentatore del magnete superconduttore |
 | **VTI** | Variable Temperature Insert — circuito di raffreddamento ausiliario |
 | **Sample loop** | Loop di controllo temperatura del campione |
-| **Hold** | Modalità di stasi: mantiene la temperatura/campo attuale senza rampe |
+| **Hold B / Hold T** | Modalità di stasi: mantengono rispettivamente il campo o la temperatura attuale senza rampe |
 | **Ricetta (Recipe)** | Sequenza programmata di operazioni da eseguire in automatico |
 | **Step** | Singola operazione all'interno di una ricetta |
 | **Template** | Set di step pre-configurati da aggiungere con un solo clic |

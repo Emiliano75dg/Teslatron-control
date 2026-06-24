@@ -349,6 +349,14 @@ def create_app(
     async def clamp() -> dict:
         return await service().clamp()
 
+    @app.post("/commands/temperature/{loop}/hold")
+    async def hold_temperature_loop(loop: str) -> dict:
+        return await service().hold_temperature(loop)
+
+    @app.post("/commands/field/hold")
+    async def hold_field() -> dict:
+        return await service().hold_field()
+
     @app.post("/commands/hold")
     async def hold() -> dict:
         return await service().hold()
