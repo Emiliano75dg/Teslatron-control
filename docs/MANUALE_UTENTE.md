@@ -651,6 +651,12 @@ confermare, poi riavvia con il config di controllo.
 I file CSV vengono scritti nella cartella `data/`. Assicurati di caricare
 il file della data corrente (es. `cryostat_environment_2026-06-17.csv`).
 
+Le versioni recenti del servizio scrivono i CSV con le colonne numeriche nelle
+prime posizioni e gli status nelle colonne successive. Se nella stessa data era
+già presente un file con header storico, il servizio non lo sovrascrive e crea
+un file separato come `cryostat_environment_2026-06-17_v2.csv`. Il log viewer
+supporta entrambi i formati.
+
 ### Il servizio era già in ascolto su quella porta
 
 Usa `teslatron-stop` per liberare le porte, poi riavvia.

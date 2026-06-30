@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Sequence, TextIO
@@ -28,12 +29,153 @@ MAGNETICS_SERIES_RIGHT: dict[str, dict[str, str]] = {
 LOCAL_TIMEZONE = datetime.now().astimezone().tzinfo
 SourceType = str | Path | TextIO | BinaryIO | Any
 
+PREFERRED_LOG_COLUMNS = [
+    "timestamp",
+    "sample_temperature_K",
+    "sample_target_K",
+    "sample_rate_K_per_min",
+    "sample_ramp_end_K",
+    "sample_heater_percent",
+    "sample_heater_power_W",
+    "sample_heater_voltage_V",
+    "vti_temperature_K",
+    "vti_target_K",
+    "vti_rate_K_per_min",
+    "vti_ramp_end_K",
+    "vti_heater_percent",
+    "vti_heater_power_W",
+    "vti_heater_voltage_V",
+    "B_T",
+    "field_target_T",
+    "field_rate_T_per_min",
+    "field_output_current_A",
+    "field_output_voltage_V",
+    "magnet_temperature_K",
+    "pt1_temperature_K",
+    "pt2_temperature_K",
+    "switch_heater_delay_s",
+    "switch_heater_elapsed_s",
+    "pressure_mbar",
+    "pressure_target_mbar",
+    "needle_valve_percent",
+    "mode",
+    "backend",
+    "sample_heater_mode",
+    "sample_loop_enabled",
+    "sample_ramp_enabled",
+    "sample_target_reached",
+    "sample_mode",
+    "sample_stable",
+    "sample_ramping",
+    "vti_heater_mode",
+    "vti_loop_enabled",
+    "vti_ramp_enabled",
+    "vti_target_reached",
+    "vti_mode",
+    "vti_stable",
+    "vti_ramping",
+    "field_action",
+    "field_at_setpoint",
+    "field_at_zero",
+    "field_clamped",
+    "field_stable",
+    "field_ramping",
+    "switch_heater_status",
+    "switch_heater_target_status",
+    "switch_heater_ready",
+    "pressure_mode",
+    "safety_level",
+    "safety_message",
+]
+
+LEGACY_LOG_COLUMNS = [
+    "timestamp",
+    "mode",
+    "backend",
+    "sample_temperature_K",
+    "sample_target_K",
+    "sample_rate_K_per_min",
+    "sample_ramp_end_K",
+    "sample_heater_percent",
+    "sample_heater_power_W",
+    "sample_heater_voltage_V",
+    "sample_mode",
+    "sample_stable",
+    "sample_ramping",
+    "vti_temperature_K",
+    "vti_target_K",
+    "vti_rate_K_per_min",
+    "vti_ramp_end_K",
+    "vti_heater_percent",
+    "vti_heater_power_W",
+    "vti_heater_voltage_V",
+    "vti_mode",
+    "vti_stable",
+    "vti_ramping",
+    "B_T",
+    "field_target_T",
+    "field_rate_T_per_min",
+    "field_output_current_A",
+    "field_output_voltage_V",
+    "magnet_temperature_K",
+    "pt1_temperature_K",
+    "pt2_temperature_K",
+    "field_stable",
+    "field_ramping",
+    "switch_heater_status",
+    "switch_heater_target_status",
+    "switch_heater_ready",
+    "switch_heater_delay_s",
+    "switch_heater_elapsed_s",
+    "pressure_mbar",
+    "pressure_target_mbar",
+    "needle_valve_percent",
+    "pressure_mode",
+    "safety_level",
+    "safety_message",
+]
+
+KNOWN_LOG_SCHEMAS = [PREFERRED_LOG_COLUMNS, LEGACY_LOG_COLUMNS]
+NUMERIC_LOG_COLUMNS = [
+    "timestamp",
+    "sample_temperature_K",
+    "sample_target_K",
+    "sample_rate_K_per_min",
+    "sample_ramp_end_K",
+    "sample_heater_percent",
+    "sample_heater_power_W",
+    "sample_heater_voltage_V",
+    "vti_temperature_K",
+    "vti_target_K",
+    "vti_rate_K_per_min",
+    "vti_ramp_end_K",
+    "vti_heater_percent",
+    "vti_heater_power_W",
+    "vti_heater_voltage_V",
+    "B_T",
+    "field_target_T",
+    "field_rate_T_per_min",
+    "field_output_current_A",
+    "field_output_voltage_V",
+    "magnet_temperature_K",
+    "pt1_temperature_K",
+    "pt2_temperature_K",
+    "switch_heater_delay_s",
+    "switch_heater_elapsed_s",
+    "pressure_mbar",
+    "pressure_target_mbar",
+    "needle_valve_percent",
+]
+
 
 def format_float(value: Any, decimals: int = 2) -> str | None:
     """Return a compact numeric string or None for missing values."""
     if pd.isna(value):
         return None
-    return f"{float(value):.{decimals}f}"
+    try:
+        return f"{float(value):.{decimals}f}"
+    except (TypeError, ValueError):
+        return None
 
 
 def values_differ(previous: Any, current: Any, threshold: float = 0.0) -> bool:
@@ -42,7 +184,12 @@ def values_differ(previous: Any, current: Any, threshold: float = 0.0) -> bool:
         return False
     if pd.isna(previous) or pd.isna(current):
         return True
-    return abs(float(current) - float(previous)) > threshold
+    try:
+        previous_value = float(previous)
+        current_value = float(current)
+    except (TypeError, ValueError):
+        return previous != current
+    return abs(current_value - previous_value) > threshold
 
 
 def normalize_time_data(series: pd.Series) -> pd.Series:
@@ -50,10 +197,11 @@ def normalize_time_data(series: pd.Series) -> pd.Series:
     Normalize timestamps to the local machine timezone for display.
     Logs are written in UTC, so we convert explicitly.
     """
-    if pd.api.types.is_numeric_dtype(series):
-        parsed = pd.to_datetime(series, unit="s", utc=True)
+    numeric_series = pd.to_numeric(series, errors="coerce")
+    if numeric_series.notna().all():
+        parsed = pd.to_datetime(numeric_series, unit="s", utc=True)
     else:
-        parsed = pd.to_datetime(series)
+        parsed = pd.to_datetime(series, errors="coerce")
         if getattr(parsed.dt, "tz", None) is None:
             parsed = parsed.dt.tz_localize("UTC")
         else:
@@ -69,6 +217,72 @@ def _source_name(source: SourceType) -> str:
     return Path(str(source)).name
 
 
+def order_log_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Reorder known cryostat columns while preserving unknown fields at the end."""
+    preferred = [column for column in ["timestamp_iso", *PREFERRED_LOG_COLUMNS] if column in df.columns]
+    remaining = [column for column in df.columns if column not in preferred]
+    return df.loc[:, [*preferred, *remaining]]
+
+
+def coerce_numeric_log_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert known numeric cryostat columns from CSV strings to numeric dtypes."""
+    for column in NUMERIC_LOG_COLUMNS:
+        if column in df.columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+    return df
+
+
+def _schema_for_row(header: list[str], row_length: int) -> list[str]:
+    if row_length == len(header):
+        return header
+    for schema in KNOWN_LOG_SCHEMAS:
+        if row_length == len(schema):
+            return schema
+    if row_length < len(header):
+        return header[:row_length]
+    extra = [f"__extra_col_{index}" for index in range(1, row_length - len(header) + 1)]
+    return [*header, *extra]
+
+
+def _read_log_csv(source: SourceType) -> pd.DataFrame:
+    if hasattr(source, "seek"):
+        source.seek(0)
+    if hasattr(source, "read"):
+        reader = csv.reader(source)
+    else:
+        handle = Path(source).open(newline="", encoding="utf-8")
+        reader = csv.reader(handle)
+
+    try:
+        header = next(reader)
+    except StopIteration:
+        if not hasattr(source, "read"):
+            handle.close()
+        return pd.DataFrame()
+
+    rows: list[dict[str, Any]] = []
+    try:
+        for row in reader:
+            if not row:
+                continue
+            schema = _schema_for_row(header, len(row))
+            rows.append(dict(zip(schema, row)))
+    finally:
+        if not hasattr(source, "read"):
+            handle.close()
+
+    ordered_columns = list(
+        dict.fromkeys(
+            [
+                *header,
+                *PREFERRED_LOG_COLUMNS,
+                *(key for row in rows for key in row.keys()),
+            ]
+        )
+    )
+    return pd.DataFrame(rows, columns=ordered_columns)
+
+
 def load_and_prepare_logs(file_paths: Sequence[SourceType]) -> tuple[pd.DataFrame, str | None, int]:
     """Read, filter, merge, and normalize one or more cryostat CSV logs."""
     if not file_paths:
@@ -78,9 +292,7 @@ def load_and_prepare_logs(file_paths: Sequence[SourceType]) -> tuple[pd.DataFram
     filtered_rows_total = 0
 
     for source in file_paths:
-        if hasattr(source, "seek"):
-            source.seek(0)
-        df = pd.read_csv(source)
+        df = _read_log_csv(source)
         if "backend" in df.columns:
             original_rows = len(df)
             df = df[df["backend"] != "mock"].copy()
@@ -101,8 +313,10 @@ def load_and_prepare_logs(file_paths: Sequence[SourceType]) -> tuple[pd.DataFram
     if not time_col:
         raise ValueError("No 'timestamp' or 'timestamp_iso' column found in the CSV.")
 
+    merged = coerce_numeric_log_columns(merged)
     merged[time_col] = normalize_time_data(merged[time_col])
     merged = merged.sort_values(by=[time_col, "__source_file__"], kind="stable").reset_index(drop=True)
+    merged = order_log_columns(merged)
     return merged, time_col, filtered_rows_total
 
 

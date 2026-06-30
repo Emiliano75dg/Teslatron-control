@@ -437,11 +437,26 @@ The cryostat service periodically saves environment data under the configured
 python3 tools/inspect_environment_log.py
 ```
 
-This opens a file picker. You can also pass a CSV path directly:
+This opens the legacy wrapper. The current Streamlit viewer lets you choose the
+files directly from the local `data/` directory. You can also pass a CSV path
+directly to the wrapper:
 
 ```bash
 python3 tools/inspect_environment_log.py data/cryostat_environment_YYYY-MM-DD.csv
 ```
+
+Current CSV files place numeric fields first and status fields later. A typical
+header begins like this:
+
+```csv
+timestamp,sample_temperature_K,sample_target_K,...,pressure_mbar,pressure_target_mbar,needle_valve_percent,mode,backend,...,pressure_mode,safety_level,safety_message
+```
+
+If a file for the same day already exists with the older header order, the
+service keeps it unchanged and starts a versioned file such as
+`cryostat_environment_YYYY-MM-DD_v2.csv`. The log viewer reads both formats.
+When the selected set includes the current-day log, the Streamlit app refreshes
+it automatically every minute.
 
 ### Electrical measurement outputs
 

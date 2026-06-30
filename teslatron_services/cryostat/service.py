@@ -18,6 +18,73 @@ from .state import CryostatMode, CryostatState, SafetyState
 
 logger = logging.getLogger(__name__)
 
+CRYOSTAT_LOG_NUMERIC_FIELDS = [
+    "sample_temperature_K",
+    "sample_target_K",
+    "sample_rate_K_per_min",
+    "sample_ramp_end_K",
+    "sample_heater_percent",
+    "sample_heater_power_W",
+    "sample_heater_voltage_V",
+    "vti_temperature_K",
+    "vti_target_K",
+    "vti_rate_K_per_min",
+    "vti_ramp_end_K",
+    "vti_heater_percent",
+    "vti_heater_power_W",
+    "vti_heater_voltage_V",
+    "B_T",
+    "field_target_T",
+    "field_rate_T_per_min",
+    "field_output_current_A",
+    "field_output_voltage_V",
+    "magnet_temperature_K",
+    "pt1_temperature_K",
+    "pt2_temperature_K",
+    "switch_heater_delay_s",
+    "switch_heater_elapsed_s",
+    "pressure_mbar",
+    "pressure_target_mbar",
+    "needle_valve_percent",
+]
+
+CRYOSTAT_LOG_STATUS_FIELDS = [
+    "mode",
+    "backend",
+    "sample_heater_mode",
+    "sample_loop_enabled",
+    "sample_ramp_enabled",
+    "sample_target_reached",
+    "sample_mode",
+    "sample_stable",
+    "sample_ramping",
+    "vti_heater_mode",
+    "vti_loop_enabled",
+    "vti_ramp_enabled",
+    "vti_target_reached",
+    "vti_mode",
+    "vti_stable",
+    "vti_ramping",
+    "field_action",
+    "field_at_setpoint",
+    "field_at_zero",
+    "field_clamped",
+    "field_stable",
+    "field_ramping",
+    "switch_heater_status",
+    "switch_heater_target_status",
+    "switch_heater_ready",
+    "pressure_mode",
+    "safety_level",
+    "safety_message",
+]
+
+CRYOSTAT_LOG_FIELD_ORDER = [
+    "timestamp",
+    *CRYOSTAT_LOG_NUMERIC_FIELDS,
+    *CRYOSTAT_LOG_STATUS_FIELDS,
+]
+
 
 class CryostatService:
     def __init__(
@@ -1075,7 +1142,7 @@ class CryostatService:
 def _flatten_state(data: dict[str, Any]) -> dict[str, Any]:
     sample = data["temperature"]["sample"]
     vti = data["temperature"]["vti"]
-    return {
+    row = {
         "timestamp": data["timestamp"],
         "mode": data["mode"],
         "backend": data["backend"],
@@ -1133,6 +1200,15 @@ def _flatten_state(data: dict[str, Any]) -> dict[str, Any]:
         "safety_level": data["safety"]["level"],
         "safety_message": data["safety"]["message"],
     }
+    return _ordered_log_row(row)
+
+
+def _ordered_log_row(row: dict[str, Any]) -> dict[str, Any]:
+    ordered = {field: row.get(field) for field in CRYOSTAT_LOG_FIELD_ORDER if field in row}
+    for key, value in row.items():
+        if key not in ordered:
+            ordered[key] = value
+    return ordered
 
 
 def _required_float(data: dict[str, Any], key: str) -> float:
