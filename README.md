@@ -88,9 +88,18 @@ example, you can inspect cryostat environment CSV logs with:
 streamlit run tools/inspect_environment_log_streamlit.py
 ```
 
-This launches a local Streamlit app where you can upload one or more log files,
-inspect merged traces with Plotly, browse reconstructed events, and preview the
-raw dataframe in a separate tab.
+This launches a local Streamlit app where you can select one or more local log
+files from the repository `data/` directory, inspect merged traces with Plotly,
+browse reconstructed events, and preview the raw dataframe in a separate tab.
+When the selected set includes the current-day log, the app refreshes
+automatically every minute to follow that file while leaving older files in the
+selection.
+
+Cryostat environment CSV files are written with numeric measurements grouped in
+the first columns, followed by status and mode fields. If the service finds an
+older file for the same day with a legacy header order, it preserves that file
+and writes the new layout to a versioned companion file such as
+`cryostat_environment_2026-06-29_v2.csv`. The log viewer accepts both layouts.
 
 This offline log viewer is separate from the live cryostat control GUI. The
 main live GUI continues to be served by the FastAPI cryostat service at the

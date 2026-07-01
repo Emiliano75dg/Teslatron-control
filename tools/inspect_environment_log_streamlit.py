@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -12,6 +13,8 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 THIS_DIR = Path(__file__).resolve().parent
+DEFAULT_LOG_DIRECTORY = (THIS_DIR.parent / "data").resolve()
+DEFAULT_LOG_PATTERN = "cryostat_environment_*.csv"
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
@@ -566,21 +569,22 @@ def render_shutdown_controls() -> None:
 
 
 @st.cache_data(show_spinner=False)
-def read_uploaded_logs(file_blobs: tuple[tuple[str, bytes], ...], reload_token: int) -> tuple[pd.DataFrame, str | None, int]:
-    """Read uploaded files through the shared data loader with cache invalidation support."""
-    sources = []
-    for name, content in file_blobs:
-        buffer = io.BytesIO(content)
-        buffer.name = name
-        sources.append(buffer)
-    return load_and_prepare_logs(sources)
-
-
-@st.cache_data(show_spinner=False)
 def read_directory_logs(file_paths: tuple[str, ...], reload_token: int) -> tuple[pd.DataFrame, str | None, int]:
     """Read filesystem log files with cache invalidation support."""
     _ = reload_token
     return load_and_prepare_logs(list(file_paths))
+
+
+@st.cache_data(show_spinner=False)
+def read_uploaded_logs(file_blobs: tuple[tuple[str, bytes], ...], reload_token: int) -> tuple[pd.DataFrame, str | None, int]:
+    """Read uploaded files through the shared data loader with cache invalidation support."""
+    _ = reload_token
+    sources = []
+    for name, content in file_blobs:
+        buffer = io.StringIO(content.decode("utf-8"))
+        buffer.name = name
+        sources.append(buffer)
+    return load_and_prepare_logs(sources)
 
 
 def discover_directory_files(directory: str, pattern: str) -> list[Path]:
@@ -593,17 +597,30 @@ def discover_directory_files(directory: str, pattern: str) -> list[Path]:
     return sorted(path for path in base.glob(pattern) if path.is_file())
 
 
-def newest_file(paths: list[Path]) -> Path | None:
-    """Return the most recently updated file from a list."""
-    if not paths:
-        return None
-    return max(paths, key=lambda path: (path.stat().st_mtime, path.name))
-
-
 def select_files_by_name(paths: list[Path], selected_names: list[str]) -> list[Path]:
     """Return files whose names are present in the current selection."""
     selected_set = set(selected_names)
     return [path for path in paths if path.name in selected_set]
+
+
+def current_day_log_files(paths: list[Path]) -> list[Path]:
+    """Return the selected files that belong to the current local day."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    prefix = f"cryostat_environment_{today}"
+    return [path for path in paths if path.stem.startswith(prefix)]
+
+
+def current_day_uploaded_names(file_names: Iterable[str]) -> list[str]:
+    """Return uploaded filenames that belong to the current local day."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    prefix = f"cryostat_environment_{today}"
+    return [name for name in file_names if Path(name).stem.startswith(prefix)]
+
+
+def refreshable_current_day_paths(file_names: Iterable[str], directory: Path) -> list[Path]:
+    """Resolve uploaded current-day filenames to local disk paths when available."""
+    available = {path.name: path for path in discover_directory_files(str(directory), DEFAULT_LOG_PATTERN)}
+    return [available[name] for name in current_day_uploaded_names(file_names) if name in available]
 
 
 def render_auto_refresh(enabled: bool, interval_seconds: int) -> None:
@@ -632,13 +649,7 @@ def init_session_value(key: str, value: object) -> None:
 def reset_ui_filters() -> None:
     """Restore the sidebar controls to their default values."""
     st.session_state["selected_theme"] = "Light"
-    st.session_state["source_mode"] = "Directory watch"
-    st.session_state["watch_directory"] = str((THIS_DIR.parent / "data").resolve())
-    st.session_state["watch_pattern"] = "cryostat_environment_*.csv"
-    st.session_state["watch_selected_files"] = []
-    st.session_state["watch_latest_only"] = False
-    st.session_state["auto_refresh_enabled"] = True
-    st.session_state["auto_refresh_seconds"] = 5
+    st.session_state["auto_refresh_seconds"] = 60
     st.session_state["show_event_markers"] = True
     st.session_state["selected_event_categories"] = list(EVENT_CATEGORY_ORDER)
     st.session_state["selected_temperature_keys"] = []
@@ -649,13 +660,7 @@ def reset_ui_filters() -> None:
 
 def main() -> None:
     init_session_value("selected_theme", "Light")
-    init_session_value("source_mode", "Directory watch")
-    init_session_value("watch_directory", str((THIS_DIR.parent / "data").resolve()))
-    init_session_value("watch_pattern", "cryostat_environment_*.csv")
-    init_session_value("watch_selected_files", [])
-    init_session_value("watch_latest_only", False)
-    init_session_value("auto_refresh_enabled", True)
-    init_session_value("auto_refresh_seconds", 5)
+    init_session_value("auto_refresh_seconds", 60)
     init_session_value("show_event_markers", True)
     init_session_value("selected_event_categories", list(EVENT_CATEGORY_ORDER))
     init_session_value("selected_temperature_keys", [])
@@ -672,39 +677,20 @@ def main() -> None:
             horizontal=True,
             key="selected_theme",
         )
-        source_mode = st.radio(
-            "Source",
-            options=["Directory watch", "Manual upload"],
-            key="source_mode",
-        )
-        auto_refresh_enabled = False
-        auto_refresh_seconds = 5
-        watch_directory = ""
-        watch_pattern = "cryostat_environment_*.csv"
+        auto_refresh_seconds = 60
+        st.caption("Current-day log refresh: every 60 s")
 
-        if source_mode == "Directory watch":
-            watch_directory = st.text_input("Log directory", key="watch_directory")
-            watch_pattern = st.text_input("File pattern", key="watch_pattern")
-            st.checkbox(
-                "Use newest file only",
-                key="watch_latest_only",
-                help="When enabled, the reader follows only the most recently updated matched file.",
-            )
-            auto_refresh_enabled = st.checkbox("Auto refresh", key="auto_refresh_enabled")
-            auto_refresh_seconds = int(
-                st.number_input("Refresh every (s)", min_value=1, max_value=300, step=1, key="auto_refresh_seconds")
-            )
-
-        reload_label = "Reload watched files" if source_mode == "Directory watch" else "Reload uploaded files"
-        if st.button(reload_label, use_container_width=True):
+        if st.button("Reload selected files", use_container_width=True):
             read_uploaded_logs.clear()
             read_directory_logs.clear()
             st.session_state["reload_counter"] += 1
             st.rerun()
 
-        if st.button("Reset filters", use_container_width=True):
-            reset_ui_filters()
-            st.rerun()
+        st.button(
+            "Reset filters",
+            use_container_width=True,
+            on_click=reset_ui_filters,
+        )
 
         st.header("Trace Selection")
         st.caption("Use Plotly pan, zoom, and hover directly on the charts.")
@@ -714,105 +700,110 @@ def main() -> None:
     st.title("Cryostat Environment Log")
     st.caption("Local Streamlit + Plotly reader for cryostat environment CSV logs.")
 
-    file_sources: list[Path] | list[object]
-    if source_mode == "Directory watch":
-        try:
-            matched_files = discover_directory_files(watch_directory, watch_pattern)
-            matched_names = [path.name for path in matched_files]
-            if st.session_state["watch_latest_only"]:
-                latest = newest_file(matched_files)
-                st.session_state["watch_selected_files"] = [latest.name] if latest is not None else []
-            else:
-                st.session_state["watch_selected_files"] = [
-                    name for name in st.session_state["watch_selected_files"] if name in matched_names
-                ]
-                if not st.session_state["watch_selected_files"] and matched_names:
-                    st.session_state["watch_selected_files"] = matched_names
+    uploaded_files = st.file_uploader(
+        "Browse one or more cryostat environment CSV files",
+        type=["csv"],
+        accept_multiple_files=True,
+    )
+    if not uploaded_files:
+        st.info("Choose one or more CSV files to inspect the cryostat environment logs.")
+        st.caption("CLI: `streamlit run inspect_environment_log_streamlit.py`")
+        return
 
-            st.sidebar.multiselect(
-                "Files to display",
-                options=matched_names,
-                key="watch_selected_files",
-                disabled=st.session_state["watch_latest_only"],
-                help="Choose the directory files to merge into the current view.",
-            )
+    try:
+        uploaded_names = [uploaded_file.name for uploaded_file in uploaded_files]
+        st.session_state["uploaded_selected_files"] = [
+            name for name in st.session_state["uploaded_selected_files"] if name in uploaded_names
+        ]
+        if not st.session_state["uploaded_selected_files"] and uploaded_names:
+            st.session_state["uploaded_selected_files"] = uploaded_names
 
-            selected_watch_files = select_files_by_name(matched_files, st.session_state["watch_selected_files"])
-            file_sources = selected_watch_files
-            file_paths = tuple(str(path) for path in selected_watch_files)
-            df, time_col, filtered_rows_total = read_directory_logs(file_paths, st.session_state["reload_counter"])
-        except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
-            st.error(str(exc))
-            st.caption("CLI: `streamlit run inspect_environment_log_streamlit.py`")
-            return
-        except Exception as exc:
-            st.error(f"Failed to read watched file(s): {exc}")
-            st.caption("CLI: `streamlit run inspect_environment_log_streamlit.py`")
-            return
-
-        st.caption(f"Watching `{watch_directory}` with pattern `{watch_pattern}`")
-        if st.session_state["watch_latest_only"] and selected_watch_files:
-            st.caption(f"Mode: newest file only (`{selected_watch_files[0].name}`)")
-        else:
-            st.caption(f"Selected files: {len(selected_watch_files)} of {len(matched_files)}")
-        if auto_refresh_enabled:
-            st.caption(f"Auto refresh enabled: every {auto_refresh_seconds} s")
-            render_auto_refresh(True, auto_refresh_seconds)
-
-        if not matched_files:
-            st.warning("No files matched the current directory/pattern selection.")
-            st.caption("CLI: `streamlit run inspect_environment_log_streamlit.py`")
-            return
-        if not selected_watch_files:
-            st.warning("Select at least one matched file to display.")
-            st.caption("CLI: `streamlit run inspect_environment_log_streamlit.py`")
-            return
-    else:
-        uploaded_files = st.file_uploader(
-            "Upload one or more cryostat environment CSV files",
-            type=["csv"],
-            accept_multiple_files=True,
+        st.sidebar.multiselect(
+            "Files to display",
+            options=uploaded_names,
+            key="uploaded_selected_files",
+            help="Choose which uploaded CSV files to merge into the current view.",
         )
 
-        if not uploaded_files:
-            st.info("Upload one or more CSV files to inspect merged cryostat environment logs.")
+        selected_uploaded_files = [
+            uploaded_file
+            for uploaded_file in uploaded_files
+            if uploaded_file.name in st.session_state["uploaded_selected_files"]
+        ]
+        if not selected_uploaded_files:
+            st.warning("Select at least one file to display.")
             st.caption("CLI: `streamlit run inspect_environment_log_streamlit.py`")
             return
 
-        try:
-            uploaded_names = [uploaded_file.name for uploaded_file in uploaded_files]
-            st.session_state["uploaded_selected_files"] = [
-                name for name in st.session_state["uploaded_selected_files"] if name in uploaded_names
-            ]
-            if not st.session_state["uploaded_selected_files"]:
-                st.session_state["uploaded_selected_files"] = uploaded_names
+        refresh_paths = refreshable_current_day_paths(
+            [uploaded_file.name for uploaded_file in selected_uploaded_files],
+            DEFAULT_LOG_DIRECTORY,
+        )
+        refresh_names = {path.name for path in refresh_paths}
+        static_upload_blobs = tuple(
+            (uploaded_file.name, uploaded_file.getvalue())
+            for uploaded_file in selected_uploaded_files
+            if uploaded_file.name not in refresh_names
+        )
 
-            st.sidebar.multiselect(
-                "Uploaded files to display",
-                options=uploaded_names,
-                key="uploaded_selected_files",
-                help="Choose which uploaded CSV files to merge into the current view.",
+        frames: list[pd.DataFrame] = []
+        filtered_rows_total = 0
+        time_col: str | None = None
+        file_sources: list[Path | object] = []
+
+        if static_upload_blobs:
+            uploaded_df, uploaded_time_col, uploaded_filtered = read_uploaded_logs(
+                static_upload_blobs,
+                st.session_state["reload_counter"],
+            )
+            if not uploaded_df.empty:
+                frames.append(uploaded_df)
+                time_col = uploaded_time_col
+            filtered_rows_total += uploaded_filtered
+            file_sources.extend(
+                uploaded_file
+                for uploaded_file in selected_uploaded_files
+                if uploaded_file.name not in refresh_names
             )
 
-            selected_uploaded_files = [
-                uploaded_file for uploaded_file in uploaded_files if uploaded_file.name in st.session_state["uploaded_selected_files"]
-            ]
-            if not selected_uploaded_files:
-                st.warning("Select at least one uploaded file to display.")
-                st.caption("CLI: `streamlit run inspect_environment_log_streamlit.py`")
-                return
+        if refresh_paths:
+            refresh_df, refresh_time_col, refresh_filtered = read_directory_logs(
+                tuple(str(path) for path in refresh_paths),
+                st.session_state["reload_counter"],
+            )
+            if not refresh_df.empty:
+                frames.append(refresh_df)
+                time_col = time_col or refresh_time_col
+            filtered_rows_total += refresh_filtered
+            file_sources.extend(refresh_paths)
 
-            file_blobs = tuple((uploaded_file.name, uploaded_file.getvalue()) for uploaded_file in selected_uploaded_files)
-            df, time_col, filtered_rows_total = read_uploaded_logs(file_blobs, st.session_state["reload_counter"])
-            file_sources = list(selected_uploaded_files)
-        except ValueError as exc:
-            st.error(str(exc))
-            st.caption("CLI: `streamlit run inspect_environment_log_streamlit.py`")
-            return
-        except Exception as exc:
-            st.error(f"Failed to read CSV file(s): {exc}")
-            st.caption("CLI: `streamlit run inspect_environment_log_streamlit.py`")
-            return
+        if not frames:
+            df = pd.DataFrame()
+        elif len(frames) == 1:
+            df = frames[0]
+        else:
+            df = pd.concat(frames, ignore_index=True, sort=False)
+            if time_col and time_col in df.columns:
+                df = df.sort_values(by=[time_col, "__source_file__"], kind="stable").reset_index(drop=True)
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        st.error(str(exc))
+        st.caption("CLI: `streamlit run inspect_environment_log_streamlit.py`")
+        return
+    except Exception as exc:
+        st.error(f"Failed to read selected file(s): {exc}")
+        st.caption("CLI: `streamlit run inspect_environment_log_streamlit.py`")
+        return
+
+    st.caption(f"Selected files: {len(selected_uploaded_files)} of {len(uploaded_files)}")
+
+    if refresh_paths:
+        current_names = ", ".join(path.name for path in refresh_paths)
+        st.caption(
+            f"Auto refresh active every {auto_refresh_seconds} s for current-day log on disk: `{current_names}`"
+        )
+        render_auto_refresh(True, auto_refresh_seconds)
+    else:
+        st.caption("Auto refresh is idle until the selected upload includes a current-day log also present in `data/`.")
 
     if filtered_rows_total > 0:
         st.warning(f"Ignored {filtered_rows_total} rows where `backend == 'mock'`.")

@@ -1,4 +1,5 @@
 import asyncio
+import csv
 import json
 import re
 import subprocess
@@ -1210,3 +1211,60 @@ class CryostatConfigTests(unittest.TestCase):
                     }
                 }
             )
+
+
+class CryostatEnvironmentLogTests(unittest.IsolatedAsyncioTestCase):
+    async def test_poll_once_writes_numeric_columns_before_status_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = CryostatServiceConfig(log_dir=tmpdir, log_interval_s=0)
+            service = CryostatService(config, backend=FakeBackend())
+
+            await service.poll_once()
+
+            csv_paths = list(Path(tmpdir).glob("cryostat_environment_*.csv"))
+            self.assertEqual(len(csv_paths), 1)
+
+            with csv_paths[0].open(newline="", encoding="utf-8") as handle:
+                header = next(csv.reader(handle))
+
+            self.assertLess(header.index("sample_temperature_K"), header.index("mode"))
+            self.assertLess(header.index("pressure_mbar"), header.index("pressure_mode"))
+            self.assertLess(header.index("switch_heater_elapsed_s"), header.index("switch_heater_status"))
+
+    async def test_header_change_creates_versioned_log_file_for_backcompat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = CryostatServiceConfig(log_dir=tmpdir, log_interval_s=0)
+            service = CryostatService(config, backend=FakeBackend())
+
+            row = service.state_snapshot()
+            legacy_header = [
+                "timestamp",
+                "mode",
+                "backend",
+                "sample_temperature_K",
+                "sample_target_K",
+                "pressure_mbar",
+                "pressure_mode",
+                "safety_level",
+            ]
+            legacy_path = Path(tmpdir) / f"cryostat_environment_{time.strftime('%Y-%m-%d')}.csv"
+            with legacy_path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=legacy_header)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "timestamp": row["timestamp"],
+                        "mode": row["mode"],
+                        "backend": row["backend"],
+                        "sample_temperature_K": row["temperature"]["sample"]["temperature_K"],
+                        "sample_target_K": row["temperature"]["sample"]["target_K"],
+                        "pressure_mbar": row["pressure"]["mbar"],
+                        "pressure_mode": row["pressure"]["mode"],
+                        "safety_level": row["safety"]["level"],
+                    }
+                )
+
+            await service.poll_once()
+
+            versioned_paths = list(Path(tmpdir).glob("cryostat_environment_*_v2.csv"))
+            self.assertEqual(len(versioned_paths), 1)
