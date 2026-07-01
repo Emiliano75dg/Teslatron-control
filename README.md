@@ -15,8 +15,9 @@ with:
 
 If you are new to the repository, start here:
 
-- `docs/MANUALE_UTENTE.md`: complete Italian user manual — GUI walkthrough, recipe
+- `docs/USER_MANUAL.md`: complete English user manual — GUI walkthrough, recipe
   builder, template buttons, workflows, safety rules, and troubleshooting
+- `docs/MANUALE_UTENTE.md`: same manual in Italian
 - `docs/user_guide.md`: guided overview of the project, startup flows, configs,
   endpoints, output files, and common workflows
 - `LAB_RUNBOOK.md`: shortest safe procedure for live lab usage
@@ -27,10 +28,11 @@ If you are new to the repository, start here:
 Recommended reading order:
 
 1. `README.md`
-2. `docs/MANUALE_UTENTE.md` for a guided, step-by-step introduction in Italian
-3. `docs/user_guide.md` for a technical English overview
-4. `LAB_RUNBOOK.md` for real hardware sessions
-5. `SERVICE_ARCHITECTURE.md` only when you need implementation-level detail
+2. `docs/USER_MANUAL.md` for a guided, step-by-step introduction in English
+3. `docs/MANUALE_UTENTE.md` for the same guide in Italian
+4. `docs/user_guide.md` for a technical English overview
+5. `LAB_RUNBOOK.md` for real hardware sessions
+6. `SERVICE_ARCHITECTURE.md` only when you need implementation-level detail
 
 ## What is in this repository
 
