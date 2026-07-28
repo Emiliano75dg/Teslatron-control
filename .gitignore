@@ -15,3 +15,6 @@ data/*.csv
 data/**/*.jsonl
 .vscode/
 backup-pre-upstream-sync-*/
+
+# Local controller exports may contain hardware-specific sensor configuration.
+docs/manuals/dev_cfg*/
